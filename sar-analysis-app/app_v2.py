@@ -100,7 +100,7 @@ with tab2:
     
     if model:
         st.success(message)
-        st.info("이 모델은 200개의 화합물 데이터로 사전 훈련되었으며, 약 0.75의 R² Score 성능을 가집니다.")
+        st.info("이 모델은 200개의 화합물 데이터로 사전 훈련되었으며, 0.8216의 R² Score 성능을 가집니다.")
         
         st.subheader("신규 화합물 정보 입력")
         new_smiles = st.text_input("활성을 예측할 분자의 SMILES 문자열을 입력하세요:", "c1ccccc1")
