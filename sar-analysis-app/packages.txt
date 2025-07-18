@@ -1,9 +1,5 @@
-libxext6
 libxrender1
-libsm6
-libice6
-libfontconfig1
-libgl1-mesa-glx
-libxft2
-libfreetype6-dev
 patchelf
+libgl1-mesa-glx
+libglib2.0-0
+xvfb
