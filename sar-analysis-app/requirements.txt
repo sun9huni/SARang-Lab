@@ -9,3 +9,4 @@ google-generativeai
 Pillow
 cairocffi
 scikit-learn
+xgboost
