@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 from rdkit import Chem
 # 변경된 파일 이름에 맞게 import 경로 수정 및 함수 추가
-from utils_v2 import load_data, find_activity_cliffs, generate_hypothesis, draw_molecule, load_pretrained_model, get_morgan_fingerprint
+from utils_v2 import load_data, find_activity_cliffs, generate_hypothesis, draw_molecule, load_pretrained_model, get_morgan_fingerprint, prepare_comparison_data, find_most_similar_compounds
 import plotly.express as px
+import plotly.graph_objects as go
 import numpy as np
 
 # --- 페이지 기본 설정 ---
@@ -34,7 +35,7 @@ st.caption("AIGEN SCIENCES & 모두의연구소 PoC - 사전 학습 모델 적�
 # 데이터 로드 (SAR 분석용)
 df = None
 if use_sample_data:
-    df = load_data("sar-analysis-app/data/sample_data.csv")
+    df = load_data("data/sample_data.csv")
 elif uploaded_file:
     df = load_data(uploaded_file)
 
@@ -99,29 +100,70 @@ with tab2:
     
     if model:
         st.success(message)
-        st.info("이 모델은 200개의 화합물 데이터로 사전 훈련되었으며, 0.6797의 R² Score 성능을 가집니다.")
         
-        st.subheader("신규 화합물 정보 입력")
-        new_smiles = st.text_input("활성을 예측할 분자의 SMILES 문자열을 입력하세요:", "c1ccccc1")
-        
-        if st.button("활성 예측", type="primary", key='qsar_button'):
-            if new_smiles:
-                mol = Chem.MolFromSmiles(new_smiles)
-                if mol:
-                    fp = get_morgan_fingerprint(mol)
-                    fp_array = np.array(fp).reshape(1, -1)
-                    
-                    predicted_activity = model.predict(fp_array)[0]
-                    
-                    st.subheader("예측 결과")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.image(draw_molecule(new_smiles), caption="입력된 분자 구조")
-                    with col2:
+        # 모델 훈련에 사용된 데이터 로드 (비교 및 시각화용)
+        training_data = load_data("data/large_sar_data.csv")
+        if training_data is not None:
+            comparison_df = prepare_comparison_data(training_data)
+            
+            # 등급 시스템을 위한 기준값 계산
+            high_potency_threshold = training_data['activity'].quantile(0.75)
+            low_potency_threshold = training_data['activity'].quantile(0.25)
+
+            st.subheader("신규 화합물 정보 입력")
+            new_smiles = st.text_input("활성을 예측할 분자의 SMILES 문자열을 입력하세요:", "c1ccccc1")
+            
+            if st.button("활성 예측", type="primary", key='qsar_button'):
+                if new_smiles:
+                    mol = Chem.MolFromSmiles(new_smiles)
+                    if mol:
+                        fp = get_morgan_fingerprint(mol)
+                        fp_array = np.array(fp).reshape(1, -1)
+                        
+                        predicted_activity = model.predict(fp_array)[0]
+                        
+                        st.subheader("📈 예측 결과 분석")
+                        
+                        # --- 1. 등급(Grade) 시스템 ---
+                        if predicted_activity >= high_potency_threshold:
+                            grade = "High Potency"
+                            st.success(f"**등급: {grade} (상위 25% 이상)**")
+                        elif predicted_activity <= low_potency_threshold:
+                            grade = "Low Potency"
+                            st.error(f"**등급: {grade} (하위 25% 이하)**")
+                        else:
+                            grade = "Medium Potency"
+                            st.info(f"**등급: {grade}**")
+
                         st.metric(label="예측된 pKi 활성도", value=f"{predicted_activity:.3f}")
-                        st.progress(min(1.0, predicted_activity / 10.0)) # 10을 최대 활성도로 가정
-                else:
-                    st.error("유효하지 않은 SMILES 문자열입니다. 다시 확인해주세요.")
+
+                        # --- 2. 분포도 위 예측값 표시 ---
+                        fig = go.Figure()
+                        fig.add_trace(go.Histogram(x=training_data['activity'], name='훈련 데이터 분포', marker_color='#3b82f6'))
+                        fig.add_vline(x=predicted_activity, line_width=3, line_dash="dash", line_color="red",
+                                      annotation_text=f"예측값: {predicted_activity:.2f}", 
+                                      annotation_position="top right")
+                        fig.update_layout(title_text='훈련 데이터 활성도 분포 및 예측값 위치', xaxis_title='pKi 값', yaxis_title='빈도')
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # --- 3. 유사 화합물 비교 ---
+                        st.subheader("🔬 유사 화합물 비교 (훈련 데이터 기준)")
+                        with st.spinner("유사 화합물을 검색 중입니다..."):
+                            similar_compounds = find_most_similar_compounds(new_smiles, comparison_df)
+                        
+                        if similar_compounds:
+                            cols = st.columns(len(similar_compounds))
+                            for i, comp in enumerate(similar_compounds):
+                                with cols[i]:
+                                    st.info(f"**Top {i+1} 유사 화합물**")
+                                    st.image(draw_molecule(comp['SMILES']), caption=f"ID: {comp['ID']}")
+                                    st.metric(label="실제 pKi", value=f"{comp['activity']:.3f}")
+                                    st.metric(label="유사도", value=f"{comp['similarity']:.3f}")
+                        else:
+                            st.warning("훈련 데이터에서 유사한 화합물을 찾을 수 없습니다.")
+
+                    else:
+                        st.error("유효하지 않은 SMILES 문자열입니다. 다시 확인해주세요.")
     else:
         # 모델 로딩 실패 시 메시지 표시
         st.error(message)
