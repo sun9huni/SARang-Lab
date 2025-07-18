@@ -105,7 +105,6 @@ with tab2:
                         
                         st.subheader("📈 예측 결과 분석")
                         
-                        # --- FIX: 예측 분자 이미지 표시를 위한 컬럼 레이아웃 추가 ---
                         col1, col2 = st.columns([1, 2])
 
                         with col1:
@@ -122,6 +121,14 @@ with tab2:
                                 grade = "Medium Potency"
                                 st.info(f"**등급: {grade}**")
                             st.metric(label="예측된 pKi 활성도", value=f"{predicted_activity:.3f}")
+                        
+                        fig = go.Figure()
+                        fig.add_trace(go.Histogram(x=training_data['activity'], name='훈련 데이터 분포', marker_color='#3b82f6'))
+                        fig.add_vline(x=predicted_activity, line_width=3, line_dash="dash", line_color="red",
+                                      annotation_text=f"예측값: {predicted_activity:.2f}", 
+                                      annotation_position="top right")
+                        fig.update_layout(title_text='훈련 데이터 활성도 분포 및 예측값 위치', xaxis_title='pKi 값', yaxis_title='빈도')
+                        st.plotly_chart(fig, use_container_width=True)
                         
                         st.subheader("🔬 유사 화합물 비교 (훈련 데이터 기준)")
                         with st.spinner("유사 화합물을 검색 중입니다..."):
