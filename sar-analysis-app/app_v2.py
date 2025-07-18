@@ -35,7 +35,7 @@ st.caption("AIGEN SCIENCES & 모두의연구소 PoC - 사전 학습 모델 적�
 # 데이터 로드 (SAR 분석용)
 df = None
 if use_sample_data:
-    df = load_data("data/sample_data.csv")
+    df = load_data("sar-analysis-app/data/sample_data.csv")
 elif uploaded_file:
     df = load_data(uploaded_file)
 
