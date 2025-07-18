@@ -37,13 +37,22 @@ def get_morgan_fingerprint(mol):
     return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
 
 def smiles_to_descriptors(smiles):
-    """(QSAR 예측용) SMILES 문자열로부터 209개의 RDKit 기술자를 계산합니다."""
+    """(QSAR 예측용) SMILES 문자열로부터 RDKit 기술자를 계산합니다."""
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
     
-    # 209개의 기술자 계산
-    descriptor_values = Descriptors.CalcDescriptors(mol)
+    # --- FIX: 올바른 방식으로 모든 기술자 계산 ---
+    descriptor_values = []
+    for name, func in Descriptors.descList:
+        try:
+            # 각 기술자 계산 함수를 직접 호출
+            value = func(mol)
+            descriptor_values.append(value)
+        except:
+            # 계산 중 오류 발생 시 NaN 값으로 처리
+            descriptor_values.append(np.nan)
+            
     # NaN/inf 값을 0으로 대체
     return np.nan_to_num(np.array(descriptor_values), nan=0.0, posinf=0.0, neginf=0.0)
 
