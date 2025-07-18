@@ -14,7 +14,9 @@ def load_data(uploaded_file):
     """업로드된 파일을 Pandas DataFrame으로 로드합니다."""
     if uploaded_file is not None:
         try:
-            if isinstance(uploaded_file, str) and uploaded_file == "data/sample_data.csv":
+            if isinstance(uploaded_file, str) and "sample_data.csv" in uploaded_file:
+                 df = pd.read_csv(uploaded_file, comment='#')
+            elif isinstance(uploaded_file, str) and "large_sar_data.csv" in uploaded_file:
                  df = pd.read_csv(uploaded_file, comment='#')
             else:
                  df = pd.read_csv(uploaded_file)
@@ -29,14 +31,14 @@ def load_data(uploaded_file):
             return None
     return None
 
-# --- QSAR 모델 로드 ---
+# --- QSAR 모델 로드 및 관련 유틸리티 ---
 
 def get_morgan_fingerprint(mol):
     """분자 객체로부터 Morgan Fingerprint를 생성합니다."""
     return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
 
 @st.cache_resource # 모델 객체는 st.cache_resource를 사용
-def load_pretrained_model(model_path="sar-analysis-app/qsar_model_chembl_tuned.joblib"):
+def load_pretrained_model(model_path="qsar_model.joblib"):
     """사전 훈련된 QSAR 모델 파일을 불러옵니다."""
     try:
         model = joblib.load(model_path)
@@ -45,6 +47,32 @@ def load_pretrained_model(model_path="sar-analysis-app/qsar_model_chembl_tuned.j
         return None, "오류: 'qsar_model.joblib' 파일을 찾을 수 없습니다. 모델 파일을 리포지토리에 업로드했는지 확인해주세요."
     except Exception as e:
         return None, f"모델 로딩 중 오류 발생: {e}"
+
+@st.cache_data
+def prepare_comparison_data(_df):
+    """유사도 비교를 위해 훈련 데이터의 분자 객체와 핑거프린트를 미리 계산합니다."""
+    df = _df.copy()
+    df.dropna(subset=['SMILES'], inplace=True)
+    df['SMILES'] = df['SMILES'].astype(str)
+    df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
+    df.dropna(subset=['mol'], inplace=True)
+    df['fp'] = df['mol'].apply(get_morgan_fingerprint)
+    return df
+
+def find_most_similar_compounds(new_smiles, training_df, top_n=2):
+    """새로운 화합물과 가장 유사한 화합물을 훈련 데이터에서 찾습니다."""
+    new_mol = Chem.MolFromSmiles(new_smiles)
+    if not new_mol:
+        return []
+    
+    new_fp = get_morgan_fingerprint(new_mol)
+    
+    # Tanimoto 유사도 계산
+    training_df['similarity'] = training_df['fp'].apply(lambda x: DataStructs.TanimotoSimilarity(x, new_fp))
+    
+    # 가장 유사한 top_n개 화합물 반환
+    most_similar = training_df.sort_values(by='similarity', ascending=False).head(top_n)
+    return most_similar.to_dict('records')
 
 
 # --- Phase 2: 핵심 패턴 자동 추출 (Activity Cliff) ---
