@@ -45,6 +45,10 @@ def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=
     - activity_diff_threshold: 활성도 차이(log scale) 임계값
     """
     df = _df.copy()
+    
+    # TypeError 방지를 위해 SMILES 컬럼을 문자열로 강제 변환
+    df['SMILES'] = df['SMILES'].astype(str)
+    
     # RDKit 분자 객체 생성
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
     df = df.dropna(subset=['mol']) # 유효하지 않은 SMILES 제거
@@ -134,7 +138,8 @@ def generate_hypothesis(cliff):
 # --- Phase 4: 리포트 생성 (시각화) ---
 
 def draw_molecule(smiles_string):
-    """SMILES 문자열로부터 외부 API를 통해 분자 구조 이미지 URL을 생성합니다."""
-    # URL에 사용될 수 있도록 SMILES 문자열을 인코딩합니다.
+    """SMILES 문자열로부터 NCI CACTUS 웹 서비스를 통해 분자 구조 이미지 URL을 생성합니다."""
+    # URL 경로에 사용될 수 있도록 SMILES 문자열을 안전하게 인코딩합니다.
     encoded_smiles = quote(smiles_string)
-    return f"https://molview.org/api/v1/smiles_to_image?smiles={encoded_smiles}&width=350&height=350"
+    # 안정적인 NCI CACTUS API를 사용
+    return f"https://cactus.nci.nih.gov/chemical/structure/{encoded_smiles}/image?format=png&width=350&height=350"
