@@ -87,6 +87,10 @@ with tab2:
         st.success(model_message)
         training_data = load_data("sar-analysis-app/data/large_sar_data.csv")
         if training_data is not None:
+            # --- FIX: 그래프 오류 방지를 위해 activity 컬럼을 숫자형으로 변환 ---
+            training_data['activity'] = pd.to_numeric(training_data['activity'], errors='coerce')
+            training_data.dropna(subset=['activity'], inplace=True)
+            
             comparison_df = prepare_comparison_data(training_data)
             high_potency_threshold = training_data['activity'].quantile(0.75)
             low_potency_threshold = training_data['activity'].quantile(0.25)
