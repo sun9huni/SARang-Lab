@@ -12,7 +12,6 @@ st.set_page_config(
 
 # --- 사이드바 ---
 with st.sidebar:
-    st.image("https://aigensciences.com/images/logo/aigen_logo_h.png", width=200)
     st.title("SAR 분석 설정")
     st.markdown("---")
 
