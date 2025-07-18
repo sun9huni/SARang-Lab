@@ -3,7 +3,7 @@ import numpy as np
 import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs, Descriptors
-import google.genergenerativeai as genai
+import google.generativeai as genai
 from urllib.parse import quote
 import joblib
 import json
