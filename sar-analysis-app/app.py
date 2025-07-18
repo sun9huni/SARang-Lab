@@ -1,157 +1,101 @@
-import pandas as pd
-import numpy as np
 import streamlit as st
-from rdkit import Chem
-from rdkit.Chem import AllChem, DataStructs
-from rdkit.Chem.Draw import rdMolDraw2D
-import google.generativeai as genai
+import pandas as pd
+from utils import load_data, find_activity_cliffs, generate_hypothesis, draw_molecule
+import plotly.express as px
 
-# --- Phase 1: 데이터 준비 및 탐색 ---
+# --- 페이지 기본 설정 ---
+st.set_page_config(
+    page_title="AI 기반 SAR 분석 시스템",
+    page_icon="🧪",
+    layout="wide"
+)
 
-@st.cache_data
-def load_data(uploaded_file):
-    """업로드된 파일을 Pandas DataFrame으로 로드합니다."""
-    if uploaded_file is not None:
-        try:
-            # 파일이름으로 기본 데이터 로드 구분
-            if isinstance(uploaded_file, str) and uploaded_file == "data/sample_data.csv":
-                 df = pd.read_csv(uploaded_file, comment='#')
-            else:
-                 df = pd.read_csv(uploaded_file)
+# --- 사이드바 ---
+with st.sidebar:
+    st.image("https://aigensciences.com/images/logo/aigen_logo_h.png", width=200)
+    st.title("SAR 분석 설정")
+    st.markdown("---")
 
-            # 필수 컬럼 확인
-            if 'SMILES' not in df.columns or 'ID' not in df.columns or len(df.columns) < 3:
-                st.error("CSV 파일은 'ID', 'SMILES', 그리고 활성도(activity) 컬럼을 포함해야 합니다.")
-                return None
-            # 마지막 컬럼을 활성도 컬럼으로 간주
-            df = df.rename(columns={df.columns[-1]: 'activity'})
-            return df
-        except Exception as e:
-            st.error(f"데이터 로딩 중 오류 발생: {e}")
-            return None
-    return None
+    # 데이터 업로드
+    uploaded_file = st.file_uploader("SAR 데이터(.csv)를 업로드하세요.", type="csv")
+    use_sample_data = st.checkbox("샘플 데이터 사용", value=True)
 
-# --- Phase 2: 핵심 패턴 자동 추출 ---
-
-def get_morgan_fingerprint(mol):
-    """분자 객체로부터 Morgan Fingerprint를 생성합니다."""
-    return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
-
-@st.cache_data
-def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=1.0):
-    """
-    DataFrame에서 Activity Cliff 쌍을 찾습니다.
-    - similarity_threshold: Tanimoto 유사도 임계값
-    - activity_diff_threshold: 활성도 차이(log scale) 임계값
-    """
-    df = _df.copy()
-    # RDKit 분자 객체 생성
-    df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
-    df = df.dropna(subset=['mol']) # 유효하지 않은 SMILES 제거
+    st.markdown("---")
     
-    # Morgan Fingerprint 생성
-    df['fp'] = df['mol'].apply(get_morgan_fingerprint)
-    
-    cliffs = []
-    for i in range(len(df)):
-        for j in range(i + 1, len(df)):
-            fp1 = df['fp'].iloc[i]
-            fp2 = df['fp'].iloc[j]
+    # 분석 파라미터
+    st.subheader("분석 파라미터")
+    similarity_threshold = st.slider("유사도 임계값 (Tanimoto)", 0.5, 1.0, 0.8, 0.05)
+    activity_diff_threshold = st.number_input("활성도 차이 임계값 (pKi)", min_value=0.1, value=1.0, step=0.1)
+
+# --- 메인 페이지 ---
+st.title("🧪 AI 기반 자동 약물 구조-활성 분석 시스템")
+st.caption("AIGEN SCIENCES & 모두의연구소 PoC")
+
+# 데이터 로드
+df = None
+if use_sample_data:
+    df = load_data("data/sample_data.csv")
+elif uploaded_file:
+    df = load_data(uploaded_file)
+
+if df is not None:
+    st.subheader("입력 데이터 미리보기")
+    st.dataframe(df.head())
+
+    # 데이터 시각화 (Phase 1)
+    st.subheader("데이터 분포 시각화")
+    fig = px.histogram(df, x='activity', title='활성도(pKi) 분포', labels={'activity': 'pKi 값'})
+    st.plotly_chart(fig, use_container_width=True)
+
+    # 분석 시작 버튼
+    if st.button("SAR 분석 시작", type="primary", use_container_width=True):
+        with st.spinner("Activity Cliff를 분석 중입니다..."):
+            # 핵심 패턴 추출 (Phase 2)
+            cliffs = find_activity_cliffs(df, similarity_threshold, activity_diff_threshold)
+
+        if not cliffs:
+            st.warning("설정된 조건에 맞는 Activity Cliff를 찾을 수 없습니다. 임계값을 조정해보세요.")
+        else:
+            st.success(f"총 {len(cliffs)}개의 Activity Cliff를 찾았습니다. 가장 큰 활성도 차이를 보이는 쌍을 분석합니다.")
             
-            # Tanimoto 유사도 계산
-            similarity = DataStructs.TanimotoSimilarity(fp1, fp2)
+            # 가장 유의미한 cliff 선택
+            top_cliff = cliffs[0]
             
-            if similarity >= similarity_threshold:
-                activity1 = df['activity'].iloc[i]
-                activity2 = df['activity'].iloc[j]
-                activity_diff = abs(activity1 - activity2)
-                
-                if activity_diff >= activity_diff_threshold:
-                    cliffs.append({
-                        'mol_1': df.iloc[i],
-                        'mol_2': df.iloc[j],
-                        'similarity': similarity,
-                        'activity_diff': activity_diff
-                    })
-    
-    # 활성도 차이가 가장 큰 순으로 정렬
-    cliffs.sort(key=lambda x: x['activity_diff'], reverse=True)
-    return cliffs
+            # 리포트 생성 (Phase 4)
+            st.header("자동 생성 SAR 요약 리포트")
+            st.markdown("---")
 
-# --- Phase 3: LLM 기반 해석 및 가설 생성 ---
+            st.subheader("핵심 분석: 주요 활성 변화 요인 (Key Activity Cliff)")
 
-def generate_hypothesis(cliff):
-    """Gemini API를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
-    try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=api_key)
-    except Exception:
-        st.error("Gemini API 키를 찾을 수 없습니다. Streamlit secrets에 키를 설정해주세요.")
-        return None
+            col1, col2 = st.columns(2)
+            
+            mol1_info = top_cliff['mol_1']
+            mol2_info = top_cliff['mol_2']
 
-    model = genai.GenerativeModel('gemini-2.0-flash')
+            with col1:
+                st.info(f"**화합물 1: {mol1_info['ID']}**")
+                img_bytes = draw_molecule(mol1_info['SMILES'])
+                if img_bytes:
+                    st.image(img_bytes, caption=f"pKi: {mol1_info['activity']:.2f}")
 
-    mol1_info = cliff['mol_1']
-    mol2_info = cliff['mol_2']
+            with col2:
+                st.info(f"**화합물 2: {mol2_info['ID']}**")
+                img_bytes = draw_molecule(mol2_info['SMILES'])
+                if img_bytes:
+                    st.image(img_bytes, caption=f"pKi: {mol2_info['activity']:.2f}")
 
-    # 활성이 더 높은 쪽을 B로 정렬
-    compound_a = mol1_info if mol1_info['activity'] < mol2_info['activity'] else mol2_info
-    compound_b = mol1_info if mol1_info['activity'] > mol2_info['activity'] else mol1_info
+            st.metric(label="Tanimoto 유사도", value=f"{top_cliff['similarity']:.3f}")
+            st.metric(label="활성도(pKi) 차이", value=f"{top_cliff['activity_diff']:.3f}")
 
-    prompt = f"""
-        당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다.
+            st.markdown("---")
+            st.subheader("자동화된 해석 및 가설 (AI-Generated Hypothesis)")
+            
+            # LLM 기반 해석 및 가설 생성 (Phase 3)
+            with st.spinner("AI가 화학적 가설을 생성 중입니다..."):
+                hypothesis = generate_hypothesis(top_cliff)
+            
+            if hypothesis:
+                st.markdown(hypothesis)
 
-        **분석 대상:**
-        - **화합물 A (낮은 활성):**
-          - ID: {compound_a['ID']}
-          - SMILES: {compound_a['SMILES']}
-          - 활성도 (pKi): {compound_a['activity']:.2f}
-        - **화합물 B (높은 활성):**
-          - ID: {compound_b['ID']}
-          - SMILES: {compound_b['SMILES']}
-          - 활성도 (pKi): {compound_b['activity']:.2f}
-
-        **분석 요청:**
-        두 화합물은 구조적으로 매우 유사하지만(Tanimoto 유사도: {cliff['similarity']:.2f}), 활성도에서 큰 차이(pKi 차이: {cliff['activity_diff']:.2f})를 보입니다.
-        이러한 'Activity Cliff' 현상을 유발하는 핵심적인 구조적 차이점을 찾아내고, 그 차이가 어떻게 활성도 증가로 이어졌는지에 대한 화학적 가설을 전문가의 관점에서 설명해주세요.
-
-        **가설에 포함할 내용:**
-        1.  **핵심 구조 변경점:** 두 분자의 가장 두드러진 차이점을 명확히 짚어주세요.
-        2.  **화학적 메커니즘:** 해당 변경이 타겟 단백질과의 상호작용에 어떤 영향을 미쳤을지 수소 결합, 소수성 상호작용, 입체 장애, 전자적 효과 등의 개념을 사용하여 구체적으로 설명해주세요.
-        3.  **결론:** 분석을 요약하고, 향후 분자 설계 방향에 대한 간단한 제언을 포함해주세요.
-
-        결과는 마크다운 형식으로 간결하고 명확하게 작성해주세요.
-    """
-    
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        st.error(f"Gemini API 호출 중 오류 발생: {e}")
-        return "가설 생성에 실패했습니다. API 키 또는 네트워크 연결을 확인해주세요."
-
-
-# --- Phase 4: 리포트 생성 (시각화) ---
-
-def draw_molecule(smiles_string):
-    """SMILES 문자열로부터 RDKit의 Cairo 백엔드를 사용하여 분자 구조 이미지를 생성합니다."""
-    mol = Chem.MolFromSmiles(smiles_string)
-    if mol is None:
-        return None
-    
-    try:
-        # Cairo 백엔드를 사용하여 Drawer 생성
-        drawer = rdMolDraw2D.MolDraw2DCairo(350, 350)
-        drawer.drawOptions().addStereoAnnotation = True
-        drawer.drawOptions().clearBackground = False
-        
-        # 분자 그리기
-        rdMolDraw2D.PrepareAndDrawMolecule(drawer, mol)
-        drawer.FinishDrawing()
-        
-        # 이미지 데이터를 bytes로 가져오기
-        png_data = drawer.GetDrawingText()
-        return png_data
-    except Exception as e:
-        st.error(f"분자 이미지 생성 중 오류 발생: {e}")
-        return None
+else:
+    st.info("분석을 시작하려면 사이드바에서 CSV 파일을 업로드하거나 샘플 데이터를 사용하세요.")
