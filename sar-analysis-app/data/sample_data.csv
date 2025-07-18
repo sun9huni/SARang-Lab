@@ -1,0 +1,10 @@
+ID,SMILES,pKi
+# Activity Cliff 예시 데이터 (pKi 값 기준)
+MOL-01,Nc1ccc(-c2c[nH]c3cc(C(N)=N)ccc23)cc1,4.37
+MOL-02,Nc1ccc(-c2c[nH]c3cc(C(N)=N)cc(O)c23)cc1,7.11
+CMP-001,CC1=CC=C(C=C1)C(=O)NC2=CC=CC=C2C,5.82
+CMP-002,O=C(NC1=CC=CC=C1)C2=CC=C(F)C=C2,6.55
+CMP-003,CC(C)C1=CC=C(C=C1)NC(=O)C2=CC=CO2,4.34
+CMP-004,O=C(NC1=CC=C(Br)C=C1)C2=CC=CS2,7.10
+MOL-03,Clc1cc(-c2c[nH]c3cc(C(N)=N)ccc23)cc(Cl)c1,4.50
+MOL-04,O(c1cc(Cl)cc(-c2c[nH]c3cc(C(N)=N)ccc23)c1)C,4.80
