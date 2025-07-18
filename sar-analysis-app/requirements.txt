@@ -6,3 +6,5 @@ matplotlib
 seaborn
 plotly
 google-generativeai
+Pillow
+cairocffi
