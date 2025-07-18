@@ -102,7 +102,7 @@ with tab2:
         st.success(message)
         
         # 모델 훈련에 사용된 데이터 로드 (비교 및 시각화용)
-        training_data = load_data("data/large_sar_data.csv")
+        training_data = load_data("sar-analysis-app/data/large_sar_data.csv")
         if training_data is not None:
             comparison_df = prepare_comparison_data(training_data)
             
