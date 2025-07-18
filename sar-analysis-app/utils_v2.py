@@ -21,7 +21,7 @@ def load_data(uploaded_file):
             if 'SMILES' not in df.columns or 'ID' not in df.columns or len(df.columns) < 3:
                 st.error("CSV 파일은 'ID', 'SMILES', 그리고 활성도(activity) 컬럼을 포함해야 합니다.")
                 return None
-            df = df.rename(columns={df.columns[-1]: 'activity'})
+            df = df.rename(columns={df.columns[2]: 'activity'})
             return df
         except Exception as e:
             st.error(f"데이터 로딩 중 오류 발생: {e}")
