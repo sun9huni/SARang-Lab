@@ -87,9 +87,6 @@ with tab2:
         st.success(model_message)
         training_data = load_data("sar-analysis-app/data/large_sar_data.csv")
         if training_data is not None:
-            # --- FIX: 그래프 오류 방지를 위해 activity 컬럼을 숫자형으로 변환 ---
-            training_data['activity'] = pd.to_numeric(training_data['activity'], errors='coerce')
-            training_data.dropna(subset=['activity'], inplace=True)
             
             comparison_df = prepare_comparison_data(training_data)
             high_potency_threshold = training_data['activity'].quantile(0.75)
@@ -125,15 +122,6 @@ with tab2:
                                 grade = "Medium Potency"
                                 st.info(f"**등급: {grade}**")
                             st.metric(label="예측된 pKi 활성도", value=f"{predicted_activity:.3f}")
-                        
-                        # 분포도 및 유사 화합물 비교는 컬럼 아래에 표시
-                        fig = go.Figure()
-                        fig.add_trace(go.Histogram(x=training_data['activity'], name='훈련 데이터 분포', marker_color='#3b82f6'))
-                        fig.add_vline(x=predicted_activity, line_width=3, line_dash="dash", line_color="red",
-                                      annotation_text=f"예측값: {predicted_activity:.2f}", 
-                                      annotation_position="top right")
-                        fig.update_layout(title_text='훈련 데이터 활성도 분포 및 예측값 위치', xaxis_title='pKi 값', yaxis_title='빈도')
-                        st.plotly_chart(fig, use_container_width=True)
                         
                         st.subheader("🔬 유사 화합물 비교 (훈련 데이터 기준)")
                         with st.spinner("유사 화합물을 검색 중입니다..."):
