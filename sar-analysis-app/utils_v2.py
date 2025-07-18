@@ -76,7 +76,7 @@ def smiles_to_descriptors(smiles):
     return np.nan_to_num(np.array(descriptor_values), nan=0.0, posinf=0.0, neginf=0.0)
 
 @st.cache_resource
-def load_pretrained_model(model_path="qsar_model.joblib"):
+def load_pretrained_model(model_path="sar-analysis-app/qsar_model_chembl_tuned.joblib"):
     """사전 훈련된 QSAR 모델 파일을 불러옵니다."""
     try:
         model_pipeline = joblib.load(model_path)
