@@ -3,8 +3,8 @@ import numpy as np
 import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs
-from rdkit.Chem.Draw import rdMolDraw2D
 import google.generativeai as genai
+from urllib.parse import quote
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
 
@@ -134,24 +134,7 @@ def generate_hypothesis(cliff):
 # --- Phase 4: 리포트 생성 (시각화) ---
 
 def draw_molecule(smiles_string):
-    """SMILES 문자열로부터 RDKit의 SVG 백엔드를 사용하여 분자 구조 이미지를 생성합니다."""
-    mol = Chem.MolFromSmiles(smiles_string)
-    if mol is None:
-        return None
-    
-    try:
-        # SVG 백엔드를 사용하여 Drawer 생성
-        drawer = rdMolDraw2D.MolDraw2DSVG(350, 350)
-        drawer.drawOptions().addStereoAnnotation = True
-        drawer.drawOptions().clearBackground = False
-        
-        # 분자 그리기
-        drawer.DrawMolecule(mol)
-        drawer.FinishDrawing()
-        
-        # SVG 데이터를 문자열로 가져오기
-        svg_data = drawer.GetDrawingText()
-        return svg_data
-    except Exception as e:
-        st.error(f"분자 이미지 생성 중 오류 발생: {e}")
-        return None
+    """SMILES 문자열로부터 외부 API를 통해 분자 구조 이미지 URL을 생성합니다."""
+    # URL에 사용될 수 있도록 SMILES 문자열을 인코딩합니다.
+    encoded_smiles = quote(smiles_string)
+    return f"https://molview.org/api/v1/smiles_to_image?smiles={encoded_smiles}&width=350&height=350"
