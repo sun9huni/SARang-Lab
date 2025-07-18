@@ -100,7 +100,7 @@ with tab2:
     st.header("QSAR 예측: 신규 분자 활성 예측")
     
     # 사전 훈련된 모델 로드 (피처 선택기가 포함된 모델 파일명으로 변경)
-    model_pipeline, message = load_pretrained_model("qsar_model_chembl_tuned_featured.joblib")
+    model_pipeline, message = load_pretrained_model("sar-analysis-app/qsar_model_chembl_tuned.joblib")
     
     if model_pipeline:
         st.success(message)
