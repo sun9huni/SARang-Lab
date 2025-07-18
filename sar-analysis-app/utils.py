@@ -13,17 +13,14 @@ def load_data(uploaded_file):
     """업로드된 파일을 Pandas DataFrame으로 로드합니다."""
     if uploaded_file is not None:
         try:
-            # 파일이름으로 기본 데이터 로드 구분
             if isinstance(uploaded_file, str) and uploaded_file == "data/sample_data.csv":
                  df = pd.read_csv(uploaded_file, comment='#')
             else:
                  df = pd.read_csv(uploaded_file)
 
-            # 필수 컬럼 확인
             if 'SMILES' not in df.columns or 'ID' not in df.columns or len(df.columns) < 3:
                 st.error("CSV 파일은 'ID', 'SMILES', 그리고 활성도(activity) 컬럼을 포함해야 합니다.")
                 return None
-            # 마지막 컬럼을 활성도 컬럼으로 간주
             df = df.rename(columns={df.columns[-1]: 'activity'})
             return df
         except Exception as e:
@@ -31,29 +28,48 @@ def load_data(uploaded_file):
             return None
     return None
 
-# --- Phase 2: 핵심 패턴 자동 추출 ---
+# --- Phase 2: 핵심 패턴 자동 추출 (지능형 스코어링 적용) ---
 
 def get_morgan_fingerprint(mol):
     """분자 객체로부터 Morgan Fingerprint를 생성합니다."""
     return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
 
+def calculate_cliff_score(cliff, max_activity_diff):
+    """
+    다중 요인을 고려하여 Activity Cliff의 중요도 점수를 계산합니다.
+    - w1 (Potency Gap): 50%
+    - w2 (Simplicity): 30%
+    - w3 (Absolute Potency): 20%
+    """
+    # 1. 활성도 차이 (Potency Gap) 점수 (0-1 정규화)
+    potency_score = cliff['activity_diff'] / max_activity_diff if max_activity_diff > 0 else 0
+
+    # 2. 구조 변화의 간결성 (Simplicity) 점수
+    simplicity_score = cliff['similarity']
+
+    # 3. 절대 활성도 (Absolute Potency) 보너스
+    high_potency_bonus = 1.0 if max(cliff['mol_1']['activity'], cliff['mol_2']['activity']) > 7.0 else 0.0
+
+    # 가중 합산
+    w1, w2, w3 = 0.5, 0.3, 0.2
+    total_score = (w1 * potency_score) + (w2 * simplicity_score) + (w3 * high_potency_bonus)
+    return total_score
+
 @st.cache_data
 def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=1.0):
     """
-    DataFrame에서 Activity Cliff 쌍을 찾습니다.
-    - similarity_threshold: Tanimoto 유사도 임계값
-    - activity_diff_threshold: 활성도 차이(log scale) 임계값
+    DataFrame에서 Activity Cliff 쌍을 찾고, 지능형 스코어를 계산하여 랭킹을 매깁니다.
     """
     df = _df.copy()
-    
-    # TypeError 방지를 위해 SMILES 컬럼을 문자열로 강제 변환
+    df.dropna(subset=['SMILES'], inplace=True)
     df['SMILES'] = df['SMILES'].astype(str)
     
-    # RDKit 분자 객체 생성
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
-    df = df.dropna(subset=['mol']) # 유효하지 않은 SMILES 제거
+    df.dropna(subset=['mol'], inplace=True)
     
-    # Morgan Fingerprint 생성
+    if df.empty:
+        return []
+
     df['fp'] = df['mol'].apply(get_morgan_fingerprint)
     
     cliffs = []
@@ -62,7 +78,6 @@ def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=
             fp1 = df['fp'].iloc[i]
             fp2 = df['fp'].iloc[j]
             
-            # Tanimoto 유사도 계산
             similarity = DataStructs.TanimotoSimilarity(fp1, fp2)
             
             if similarity >= similarity_threshold:
@@ -78,8 +93,18 @@ def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=
                         'activity_diff': activity_diff
                     })
     
-    # 활성도 차이가 가장 큰 순으로 정렬
-    cliffs.sort(key=lambda x: x['activity_diff'], reverse=True)
+    if not cliffs:
+        return []
+
+    # 스코어 계산을 위한 최대 활성도 차이 값 찾기
+    max_diff = max(c['activity_diff'] for c in cliffs)
+    
+    # 각 cliff에 대해 스코어 계산
+    for cliff in cliffs:
+        cliff['score'] = calculate_cliff_score(cliff, max_diff)
+        
+    # 계산된 스코어가 높은 순으로 정렬
+    cliffs.sort(key=lambda x: x['score'], reverse=True)
     return cliffs
 
 # --- Phase 3: LLM 기반 해석 및 가설 생성 ---
@@ -97,8 +122,6 @@ def generate_hypothesis(cliff):
 
     mol1_info = cliff['mol_1']
     mol2_info = cliff['mol_2']
-
-    # 활성이 더 높은 쪽을 B로 정렬
     compound_a = mol1_info if mol1_info['activity'] < mol2_info['activity'] else mol2_info
     compound_b = mol1_info if mol1_info['activity'] > mol2_info['activity'] else mol1_info
 
@@ -139,7 +162,5 @@ def generate_hypothesis(cliff):
 
 def draw_molecule(smiles_string):
     """SMILES 문자열로부터 NCI CACTUS 웹 서비스를 통해 분자 구조 이미지 URL을 생성합니다."""
-    # URL 경로에 사용될 수 있도록 SMILES 문자열을 안전하게 인코딩합니다.
     encoded_smiles = quote(smiles_string)
-    # 안정적인 NCI CACTUS API를 사용
     return f"https://cactus.nci.nih.gov/chemical/structure/{encoded_smiles}/image?format=png&width=350&height=350"
