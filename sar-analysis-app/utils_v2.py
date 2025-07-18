@@ -36,7 +36,7 @@ def get_morgan_fingerprint(mol):
     return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
 
 @st.cache_resource # 모델 객체는 st.cache_resource를 사용
-def load_pretrained_model(model_path="sar-analysis-app/qsar_model.joblib"):
+def load_pretrained_model(model_path="sar-analysis-app/data/qsar_model_strategy.joblib"):
     """사전 훈련된 QSAR 모델 파일을 불러옵니다."""
     try:
         model = joblib.load(model_path)
