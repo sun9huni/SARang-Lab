@@ -74,15 +74,15 @@ if df is not None:
 
             with col1:
                 st.info(f"**화합물 1: {mol1_info['ID']}**")
-                img_bytes = draw_molecule(mol1_info['SMILES'])
-                if img_bytes:
-                    st.image(img_bytes, caption=f"pKi: {mol1_info['activity']:.2f}")
+                image_url = draw_molecule(mol1_info['SMILES'])
+                if image_url:
+                    st.image(image_url, caption=f"pKi: {mol1_info['activity']:.2f}")
 
             with col2:
                 st.info(f"**화합물 2: {mol2_info['ID']}**")
-                img_bytes = draw_molecule(mol2_info['SMILES'])
-                if img_bytes:
-                    st.image(img_bytes, caption=f"pKi: {mol2_info['activity']:.2f}")
+                image_url = draw_molecule(mol2_info['SMILES'])
+                if image_url:
+                    st.image(image_url, caption=f"pKi: {mol2_info['activity']:.2f}")
 
             st.metric(label="Tanimoto 유사도", value=f"{top_cliff['similarity']:.3f}")
             st.metric(label="활성도(pKi) 차이", value=f"{top_cliff['activity_diff']:.3f}")
