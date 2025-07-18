@@ -1,7 +1,8 @@
+python-version == "3.9"
 streamlit
 pandas
 numpy
-rdkit
+rdkit-pypi==2022.09.5
 matplotlib
 seaborn
 plotly
