@@ -6,3 +6,4 @@ libfontconfig1
 libgl1-mesa-glx
 libxft2
 libfreetype6-dev
+patchelf
