@@ -26,7 +26,7 @@ with st.sidebar:
 
 # --- 메인 페이지 ---
 st.title("💊 AI 기반 SAR & QSAR 분석 시스템 (v2)")
-st.caption("AIGEN SCIENCES & 모두의연구소 PoC - 사전 학습 모델 적용")
+st.caption("AIGEN SCIENCES & 모두의연구소 PoC")
 
 df = None
 if use_sample_data:
