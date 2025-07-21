@@ -85,7 +85,7 @@ with tab2:
     
     if model and feature_list:
         st.success(model_message)
-        training_data = load_data("data/large_sar_data.csv")
+        training_data = load_data("sar-analysis-app/data/large_sar_data.csv")
         if training_data is not None:
             st.subheader("신규 화합물 정보 입력")
             new_smiles = st.text_input("활성을 예측할 분자의 SMILES 문자열을 입력하세요:", "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OC")
