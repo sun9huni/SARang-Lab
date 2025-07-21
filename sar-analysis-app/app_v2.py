@@ -72,13 +72,19 @@ with tab1:
                     st.info(f"**화합물 2: {mol2_info['ID']}**")
                     st.image(draw_molecule(mol2_info['SMILES']), caption=f"pKi: {mol2_info['activity']:.2f}")
                 st.metric("Tanimoto 유사도", f"{selected_cliff['similarity']:.3f}")
-                with st.spinner("AI가 화학적 가설을 생성 중입니다..."):
-                    hypothesis = generate_hypothesis(selected_cliff)
+                # --- NEW: RAG 적용 ---
+                with st.spinner("관련 문헌 검색 및 AI 가설 생성 중..."):
+                    hypothesis, source_info = generate_hypothesis(selected_cliff)
+                
                 if hypothesis:
                     st.markdown("**AI-Generated Hypothesis:**")
                     st.info(hypothesis)
-    else:
-        st.info("SAR 분석을 시작하려면 사이드바에서 CSV 파일을 업로드하거나 샘플 데이터를 사용하세요.")
+                    
+                    if source_info:
+                        with st.expander("📚 참고 문헌 정보 (RAG 근거)"):
+                            st.markdown(f"**제목:** {source_info['title']}")
+                            st.markdown(f"**PubMed 링크:** [{source_info['pmid']}]({source_info['link']})")
+                            st.text_area("초록:", source_info['abstract'], height=200)
 
 # --- QSAR 예측 탭 ---
 with tab2:
