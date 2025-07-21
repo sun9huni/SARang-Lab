@@ -9,6 +9,8 @@ from urllib.parse import quote
 import joblib
 import json
 import re
+import requests
+import xml.etree.ElementTree as ET
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
 @st.cache_data
@@ -40,6 +42,108 @@ def load_data(uploaded_file):
             st.error(f"데이터 로딩 중 오류 발생: {e}")
             return None
     return None
+
+# --- NEW: RAG를 위한 PubMed 검색 기능 ---
+@st.cache_data
+def search_pubmed_for_context(smiles, target_name="EGFR", max_results=1):
+    """PubMed에서 관련 논문 초록을 검색하여 RAG를 위한 컨텍스트를 반환합니다."""
+    mol = Chem.MolFromSmiles(smiles)
+    if not mol:
+        return None
+    
+    # 검색어로 분자의 핵심 골격(Scaffold) 사용
+    scaffold = MurckoScaffold.GetScaffoldForMol(mol)
+    scaffold_smiles = Chem.MolToSmiles(scaffold, isomericSmiles=False)
+    
+    # 검색어 구성 (Scaffold SMILES는 너무 길 수 있으므로 분자식 사용)
+    mol_formula = Chem.rdMolDescriptors.CalcMolFormula(scaffold)
+    search_term = f'("{mol_formula}"[Formula]) AND ("{target_name}"[Title/Abstract])'
+
+    try:
+        # 1. ESearch: 관련 논문 ID 검색
+        esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+        esearch_params = {'db': 'pubmed', 'term': search_term, 'retmax': max_results, 'sort': 'relevance'}
+        response = requests.get(esearch_url, params=esearch_params)
+        response.raise_for_status()
+        
+        root = ET.fromstring(response.content)
+        id_list = [elem.text for elem in root.findall('.//Id')]
+        
+        if not id_list:
+            return None
+
+        # 2. EFetch: 논문 ID로 상세 정보(초록) 가져오기
+        efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+        efetch_params = {'db': 'pubmed', 'id': ",".join(id_list), 'retmode': 'xml'}
+        response = requests.get(efetch_url, params=efetch_params)
+        response.raise_for_status()
+        
+        root = ET.fromstring(response.content)
+        article = root.find('.//PubmedArticle')
+        if article:
+            title = article.findtext('.//ArticleTitle', 'No title found')
+            abstract = article.findtext('.//Abstract/AbstractText', 'No abstract found')
+            pmid = article.findtext('.//PMID', '')
+            
+            return {
+                "title": title,
+                "abstract": abstract,
+                "pmid": pmid,
+                "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+            }
+    except requests.exceptions.RequestException as e:
+        st.warning(f"PubMed 검색 중 네트워크 오류 발생: {e}")
+        return None
+    except Exception as e:
+        st.warning(f"PubMed 데이터 파싱 중 오류 발생: {e}")
+        return None
+    return None
+
+
+# --- LLM 기반 가설 생성 (RAG 적용) ---
+def generate_hypothesis(cliff):
+    """PubMed 컨텍스트를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
+    except Exception:
+        st.error("Gemini API 키를 찾을 수 없습니다.")
+        return None, None
+
+    model = genai.GenerativeModel('gemini-2.0-flash')
+    mol1_info, mol2_info = cliff['mol_1'], cliff['mol_2']
+    compound_a = mol1_info if mol1_info['activity'] < mol2_info['activity'] else mol2_info
+    compound_b = mol1_info if mol1_info['activity'] > mol2_info['activity'] else mol1_info
+    
+    # RAG 컨텍스트 검색
+    context_info = search_pubmed_for_context(compound_b['SMILES'])
+    rag_prompt_addition = ""
+    if context_info:
+        rag_prompt_addition = f"""
+        **참고 문헌 정보:**
+        - 제목: {context_info['title']}
+        - 초록: {context_info['abstract']}
+        
+        위 참고 문헌의 내용을 바탕으로 가설을 생성해주세요.
+        """
+
+    prompt_addition = ""
+    mol_a = Chem.MolFromSmiles(compound_a['SMILES'])
+    mol_b = Chem.MolFromSmiles(compound_b['SMILES'])
+    if mol_a and mol_b:
+        base_smiles_a = Chem.MolToSmiles(mol_a, isomericSmiles=False, canonical=True)
+        base_smiles_b = Chem.MolToSmiles(mol_b, isomericSmiles=False, canonical=True)
+        if base_smiles_a == base_smiles_b and compound_a['SMILES'] != compound_b['SMILES']:
+            prompt_addition = "특히, 이 두 화합물은 동일한 2D 구조를 가진 입체이성질체(stereoisomer)입니다. 3D 공간 배열의 차이가 어떻게 이러한 활성 차이를 유발하는지 집중적으로 설명해주세요."
+
+    prompt = f"당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다.\n\n**분석 대상:**\n- **화합물 A (낮은 활성):**\n  - ID: {compound_a['ID']}\n  - SMILES: {compound_a['SMILES']}\n  - 활성도 (pKi): {compound_a['activity']:.2f}\n- **화합물 B (높은 활성):**\n  - ID: {compound_b['ID']}\n  - SMILES: {compound_b['SMILES']}\n  - 활성도 (pKi): {compound_b['activity']:.2f}\n\n**분석 요청:**\n두 화합물은 구조적으로 매우 유사하지만(Tanimoto 유사도: {cliff['similarity']:.2f}), 활성도에서 큰 차이(pKi 차이: {cliff['activity_diff']:.2f})를 보입니다.\n이러한 'Activity Cliff' 현상을 유발하는 핵심적인 구조적 차이점을 찾아내고, 그 차이가 어떻게 활성도 증가로 이어졌는지에 대한 화학적 가설을 전문가의 관점에서 설명해주세요. {prompt_addition}\n\n{rag_prompt_addition}"
+    
+    try:
+        response = model.generate_content(prompt)
+        return response.text, context_info
+    except Exception as e:
+        st.error(f"Gemini API 호출 중 오류 발생: {e}")
+        return "가설 생성에 실패했습니다.", None
 
 # --- QSAR 모델 로드 및 예측용 피처 생성 ---
 
@@ -147,36 +251,6 @@ def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=
                     cliffs.append({'mol_1': df.iloc[i], 'mol_2': df.iloc[j], 'similarity': similarity, 'activity_diff': activity_diff})
     cliffs.sort(key=lambda x: x['activity_diff'], reverse=True)
     return cliffs
-
-def generate_hypothesis(cliff):
-    try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=api_key)
-    except Exception:
-        st.error("Gemini API 키를 찾을 수 없습니다.")
-        return None
-    model = genai.GenerativeModel('gemini-2.0-flash')
-    mol1_info, mol2_info = cliff['mol_1'], cliff['mol_2']
-    compound_a = mol1_info if mol1_info['activity'] < mol2_info['activity'] else mol2_info
-    compound_b = mol1_info if mol1_info['activity'] > mol2_info['activity'] else mol1_info
-    
-    prompt_addition = ""
-    mol_a = Chem.MolFromSmiles(compound_a['SMILES'])
-    mol_b = Chem.MolFromSmiles(compound_b['SMILES'])
-    if mol_a and mol_b:
-        base_smiles_a = Chem.MolToSmiles(mol_a, isomericSmiles=False, canonical=True)
-        base_smiles_b = Chem.MolToSmiles(mol_b, isomericSmiles=False, canonical=True)
-        if base_smiles_a == base_smiles_b and compound_a['SMILES'] != compound_b['SMILES']:
-            prompt_addition = "특히, 이 두 화합물은 동일한 2D 구조를 가진 입체이성질체(stereoisomer)입니다. 3D 공간 배열의 차이가 어떻게 이러한 활성 차이를 유발하는지 집중적으로 설명해주세요."
-
-    prompt = f"당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다.\n\n**분석 대상:**\n- **화합물 A (낮은 활성):**\n  - ID: {compound_a['ID']}\n  - SMILES: {compound_a['SMILES']}\n  - 활성도 (pKi): {compound_a['activity']:.2f}\n- **화합물 B (높은 활성):**\n  - ID: {compound_b['ID']}\n  - SMILES: {compound_b['SMILES']}\n  - 활성도 (pKi): {compound_b['activity']:.2f}\n\n**분석 요청:**\n두 화합물은 구조적으로 매우 유사하지만(Tanimoto 유사도: {cliff['similarity']:.2f}), 활성도에서 큰 차이(pKi 차이: {cliff['activity_diff']:.2f})를 보입니다.\n이러한 'Activity Cliff' 현상을 유발하는 핵심적인 구조적 차이점을 찾아내고, 그 차이가 어떻게 활성도 증가로 이어졌는지에 대한 화학적 가설을 전문가의 관점에서 설명해주세요. {prompt_addition}"
-    
-    try:
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        st.error(f"Gemini API 호출 중 오류 발생: {e}")
-        return "가설 생성에 실패했습니다."
 
 def draw_molecule(smiles_string):
     encoded_smiles = quote(smiles_string)
