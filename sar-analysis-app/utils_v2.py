@@ -180,3 +180,62 @@ def generate_hypothesis(cliff):
 def draw_molecule(smiles_string):
     encoded_smiles = quote(smiles_string)
     return f"https://cactus.nci.nih.gov/chemical/structure/{encoded_smiles}/image?format=png&width=350&height=350"
+
+# --- NEW: AI 기반 분자 제안 및 예측 함수 ---
+def propose_and_predict_analogs(base_smiles, qsar_model, feature_list):
+    """AI를 통해 개선된 분자 구조를 제안받고, QSAR 모델로 활성을 예측합니다."""
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
+    except Exception:
+        st.error("Gemini API 키를 찾을 수 없습니다.")
+        return []
+
+    model_gen = genai.GenerativeModel('gemini-2.0-flash')
+    
+    prompt = f"""
+        당신은 신약 개발 전문가인 숙련된 의약화학자입니다.
+
+        **과제:**
+        주어진 기준 화합물(base compound)의 구조를 분석하고, 활성도(potency)를 향상시킬 수 있는 새로운 유사체(analog) 3개를 제안해주세요. 제안하는 분자는 기존 구조와 유사해야 하며, 합성이 가능한 현실적인 구조여야 합니다.
+
+        **기준 화합물 SMILES:**
+        {base_smiles}
+
+        **지침:**
+        1.  기준 화합물의 SAR(구조-활성 관계)을 고려하여, 활성을 높일 수 있는 일반적인 의약화학 전략을 적용하세요. (예: 수소 결합 주개/받개 추가, 소수성 포켓 상호작용 강화, 고리 시스템 변경 등)
+        2.  제안하는 각 유사체에 대해, 변경된 부분과 예상되는 활성 향상 이유를 한 문장으로 간략하게 설명해주세요.
+        3.  결과는 반드시 아래의 형식에 맞춰, 각 줄에 "SMILES,이유" 형태로 작성해주세요. 다른 설명은 추가하지 마세요.
+
+        **출력 형식 예시:**
+        CCOc1ccccc1,알코올을 에틸 에터로 변경하여 소수성을 증가시킴.
+        c1ccc(C(F)(F)F)cc1,벤젠 고리에 강력한 전자 끌기 그룹을 추가하여 상호작용을 변경함.
+    """
+
+    try:
+        response = model_gen.generate_content(prompt)
+        
+        proposals = []
+        # AI 응답에서 SMILES 코드와 설명을 추출
+        lines = response.text.strip().split('\n')
+        for line in lines:
+            parts = line.split(',')
+            if len(parts) == 2:
+                smiles = parts[0].strip()
+                reason = parts[1].strip()
+                mol = Chem.MolFromSmiles(smiles)
+                if mol: # 유효한 SMILES인지 확인
+                    features = smiles_to_descriptors(smiles, feature_list)
+                    if features is not None:
+                        features_array = features.reshape(1, -1)
+                        predicted_pki = qsar_model.predict(features_array)[0]
+                        proposals.append({
+                            "smiles": smiles,
+                            "reason": reason,
+                            "predicted_pki": predicted_pki
+                        })
+        return proposals
+
+    except Exception as e:
+        st.error(f"AI 분자 제안 중 오류 발생: {e}")
+        return []
