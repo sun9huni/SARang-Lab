@@ -90,43 +90,50 @@ with tab2:
     
     if model and feature_list:
         st.success(model_message)
-        training_data = load_data("sar-analysis-app/data/large_sar_data.csv")
-        if training_data is not None:
-            st.subheader("신규 화합물 정보 입력")
-            new_smiles = st.text_input("활성을 예측할 분자의 SMILES 문자열을 입력하세요:", "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OC")
-            
-            if st.button("활성 예측 및 비교 분석", type="primary", key='qsar_button'):
-                if new_smiles:
-                    features = smiles_to_descriptors(new_smiles, feature_list)
-                    if features is not None:
-                        features_array = features.reshape(1, -1)
-                        predicted_activity = model.predict(features_array)[0]
-                        
-                        st.subheader("📈 예측 및 비교 분석 결과")
-                        
+        
+        st.subheader("최적화할 기준 화합물 정보 입력")
+        base_smiles = st.text_input("SMILES 문자열을 입력하세요:", "c1ccc(cc1)c2cnc3ccccc3c2")
+        
+        if st.button("AI 최적화 및 활성 예측", type="primary", key='qsar_button'):
+            if base_smiles:
+                features = smiles_to_descriptors(base_smiles, feature_list)
+                if features is not None:
+                    features_array = features.reshape(1, -1)
+                    base_predicted_pki = model.predict(features_array)[0]
+                    
+                    st.subheader("🔬 분석 결과")
+                    
+                    # 기준 화합물 정보 표시
+                    with st.container(border=True):
+                        st.write("**기준 화합물**")
                         col1, col2 = st.columns([1, 2])
                         with col1:
-                            st.image(draw_molecule(new_smiles), caption="입력된 분자 구조")
-                            st.metric(label="예측된 pKi 활성도", value=f"{predicted_activity:.3f}")
-
+                            st.image(draw_molecule(base_smiles))
                         with col2:
-                            st.info("Scaffold 기반 활성 비교")
-                            scaffold_matches_pki = find_scaffold_matches(training_data, new_smiles)
-                            
-                            if scaffold_matches_pki:
-                                fig = go.Figure()
-                                fig.add_trace(go.Box(y=scaffold_matches_pki, name="동일 Scaffold 그룹", marker_color='#3b82f6', boxpoints='all', jitter=0.3))
-                                fig.add_trace(go.Scatter(x=["동일 Scaffold 그룹"], y=[predicted_activity], mode='markers',
-                                                         marker=dict(color='red', size=14, symbol='star'), name='예측값'))
-                                fig.update_layout(
-                                    title_text=f"동일 Scaffold 그룹 내 활성도 비교 ({len(scaffold_matches_pki)}개 화합물)",
-                                    yaxis_title="pKi 값"
-                                )
-                                st.plotly_chart(fig, use_container_width=True)
-                            else:
-                                st.warning("훈련 데이터에서 동일한 Scaffold를 가진 화합물을 찾을 수 없습니다.")
+                            st.metric(label="예상 pKi", value=f"{base_predicted_pki:.3f}")
+                            st.caption("이 화합물을 기반으로 AI가 더 좋은 구조를 제안합니다.")
+
+                    st.markdown("---")
+                    
+                    # AI가 제안하는 신규 화합물
+                    with st.spinner("AI가 활성도 개선을 위한 새로운 분자를 설계하고 있습니다..."):
+                        proposals = propose_and_predict_analogs(base_smiles, model, feature_list)
+                    
+                    if proposals:
+                        st.write("**AI 제안 신규 화합물**")
+                        cols = st.columns(len(proposals))
+                        for i, p in enumerate(proposals):
+                            with cols[i]:
+                                with st.container(border=True):
+                                    st.image(draw_molecule(p['smiles']))
+                                    delta_pki = p['predicted_pki'] - base_predicted_pki
+                                    st.metric(label="예상 pKi", value=f"{p['predicted_pki']:.3f}", delta=f"{delta_pki:+.2f}")
+                                    st.caption(f"**변경 이유:** {p['reason']}")
                     else:
-                        st.error("유효하지 않은 SMILES 문자열입니다. 다시 확인해주세요.")
+                        st.warning("AI가 유효한 개선안을 제안하지 못했습니다. 다른 SMILES로 시도해보세요.")
+
+                else:
+                    st.error("유효하지 않은 SMILES 문자열입니다. 다시 확인해주세요.")
     else:
         if not model: st.error(model_message)
         if not feature_list: st.error("오류: 'features.json' 파일을 찾을 수 없습니다.")
