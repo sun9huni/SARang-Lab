@@ -10,3 +10,4 @@ Pillow
 cairocffi
 scikit-learn
 xgboost
+requests
