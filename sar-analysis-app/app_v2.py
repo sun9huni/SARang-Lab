@@ -85,67 +85,43 @@ with tab2:
     
     if model and feature_list:
         st.success(model_message)
-        training_data = load_data("sar-analysis-app/data/large_sar_data.csv")
+        training_data = load_data("data/large_sar_data.csv")
         if training_data is not None:
-            
-            comparison_df = prepare_comparison_data(training_data)
-            high_potency_threshold = training_data['activity'].quantile(0.75)
-            low_potency_threshold = training_data['activity'].quantile(0.25)
-
             st.subheader("신규 화합물 정보 입력")
             new_smiles = st.text_input("활성을 예측할 분자의 SMILES 문자열을 입력하세요:", "COc1cc2ncnc(Nc3ccc(F)c(Cl)c3)c2cc1OC")
             
-            if st.button("활성 예측", type="primary", key='qsar_button'):
+            if st.button("활성 예측 및 비교 분석", type="primary", key='qsar_button'):
                 if new_smiles:
                     features = smiles_to_descriptors(new_smiles, feature_list)
-                    
                     if features is not None:
                         features_array = features.reshape(1, -1)
                         predicted_activity = model.predict(features_array)[0]
                         
-                        st.subheader("📈 예측 결과 분석")
+                        st.subheader("📈 예측 및 비교 분석 결과")
                         
                         col1, col2 = st.columns([1, 2])
-
                         with col1:
                             st.image(draw_molecule(new_smiles), caption="입력된 분자 구조")
+                            st.metric(label="예측된 pKi 활성도", value=f"{predicted_activity:.3f}")
 
                         with col2:
-                            if predicted_activity >= high_potency_threshold:
-                                grade = "High Potency"
-                                st.success(f"**등급: {grade} (상위 25% 이상)**")
-                            elif predicted_activity <= low_potency_threshold:
-                                grade = "Low Potency"
-                                st.error(f"**등급: {grade} (하위 25% 이하)**")
+                            st.info("Scaffold 기반 활성 비교")
+                            scaffold_matches_pki = find_scaffold_matches(training_data, new_smiles)
+                            
+                            if scaffold_matches_pki:
+                                fig = go.Figure()
+                                fig.add_trace(go.Box(y=scaffold_matches_pki, name="동일 Scaffold 그룹", marker_color='#3b82f6', boxpoints='all', jitter=0.3))
+                                fig.add_trace(go.Scatter(x=["동일 Scaffold 그룹"], y=[predicted_activity], mode='markers',
+                                                         marker=dict(color='red', size=14, symbol='star'), name='예측값'))
+                                fig.update_layout(
+                                    title_text=f"동일 Scaffold 그룹 내 활성도 비교 ({len(scaffold_matches_pki)}개 화합물)",
+                                    yaxis_title="pKi 값"
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
                             else:
-                                grade = "Medium Potency"
-                                st.info(f"**등급: {grade}**")
-                            st.metric(label="예측된 pKi 활성도", value=f"{predicted_activity:.3f}")
-                        
-                        fig = go.Figure()
-                        fig.add_trace(go.Histogram(x=training_data['activity'], name='훈련 데이터 분포', marker_color='#3b82f6'))
-                        fig.add_vline(x=predicted_activity, line_width=3, line_dash="dash", line_color="red",
-                                      annotation_text=f"예측값: {predicted_activity:.2f}", 
-                                      annotation_position="top right")
-                        fig.update_layout(title_text='훈련 데이터 활성도 분포 및 예측값 위치', xaxis_title='pKi 값', yaxis_title='빈도')
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        st.subheader("🔬 유사 화합물 비교 (훈련 데이터 기준)")
-                        with st.spinner("유사 화합물을 검색 중입니다..."):
-                            similar_compounds = find_most_similar_compounds(new_smiles, comparison_df)
-                        if similar_compounds:
-                            cols_sim = st.columns(len(similar_compounds))
-                            for i, comp in enumerate(similar_compounds):
-                                with cols_sim[i]:
-                                    st.info(f"**Top {i+1} 유사 화합물**")
-                                    st.image(draw_molecule(comp['SMILES']), caption=f"ID: {comp['ID']}")
-                                    st.metric(label="실제 pKi", value=f"{comp['activity']:.3f}")
-                                    st.metric(label="유사도", value=f"{comp['similarity']:.3f}")
-                        else:
-                            st.warning("훈련 데이터에서 유사한 화합물을 찾을 수 없습니다.")
+                                st.warning("훈련 데이터에서 동일한 Scaffold를 가진 화합물을 찾을 수 없습니다.")
                     else:
                         st.error("유효하지 않은 SMILES 문자열입니다. 다시 확인해주세요.")
     else:
         if not model: st.error(model_message)
         if not feature_list: st.error("오류: 'features.json' 파일을 찾을 수 없습니다.")
-
