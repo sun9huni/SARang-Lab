@@ -3,6 +3,7 @@ import numpy as np
 import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs, Descriptors
+from rdkit.Chem.Scaffolds import MurckoScaffold
 import google.generativeai as genai
 from urllib.parse import quote
 import joblib
@@ -106,6 +107,25 @@ def get_morgan_fingerprint(mol):
     return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
 
 @st.cache_data
+def prepare_comparison_data(_df):
+    """유사도 비교를 위해 훈련 데이터의 분자 객체와 핑거프린트를 미리 계산합니다."""
+    df = _df.copy()
+    df.dropna(subset=['SMILES'], inplace=True)
+    df['SMILES'] = df['SMILES'].astype(str)
+    df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
+    df.dropna(subset=['mol'], inplace=True)
+    df['fp'] = df['mol'].apply(get_morgan_fingerprint)
+    return df
+
+def find_most_similar_compounds(new_smiles, training_df, top_n=2):
+    """새로운 화합물과 가장 유사한 화합물을 훈련 데이터에서 찾습니다."""
+    new_mol = Chem.MolFromSmiles(new_smiles)
+    if not new_mol: return []
+    new_fp = get_morgan_fingerprint(new_mol)
+    training_df['similarity'] = training_df['fp'].apply(lambda x: DataStructs.TanimotoSimilarity(x, new_fp))
+    most_similar = training_df.sort_values(by='similarity', ascending=False).head(top_n)
+    return most_similar.to_dict('records')
+
 def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=1.0):
     df = _df.copy()
     df.dropna(subset=['SMILES'], inplace=True)
