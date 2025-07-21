@@ -99,7 +99,6 @@ def search_pubmed_for_context(smiles, target_name="EGFR", max_results=1):
         return None
     return None
 
-
 # --- LLM 기반 가설 생성 (RAG 적용) ---
 def generate_hypothesis(cliff):
     """PubMed 컨텍스트를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
@@ -112,8 +111,13 @@ def generate_hypothesis(cliff):
 
     model = genai.GenerativeModel('gemini-2.0-flash')
     mol1_info, mol2_info = cliff['mol_1'], cliff['mol_2']
-    compound_a = mol1_info if mol1_info['activity'] < mol2_info['activity'] else mol2_info
-    compound_b = mol1_info if mol1_info['activity'] > mol2_info['activity'] else mol1_info
+    
+    if mol1_info['activity'] < mol2_info['activity']:
+        compound_a = mol1_info
+        compound_b = mol2_info
+    else:
+        compound_a = mol2_info
+        compound_b = mol1_info
     
     # RAG 컨텍스트 검색
     context_info = search_pubmed_for_context(compound_b['SMILES'])
@@ -144,6 +148,7 @@ def generate_hypothesis(cliff):
     except Exception as e:
         st.error(f"Gemini API 호출 중 오류 발생: {e}")
         return "가설 생성에 실패했습니다.", None
+
 
 # --- QSAR 모델 로드 및 예측용 피처 생성 ---
 
