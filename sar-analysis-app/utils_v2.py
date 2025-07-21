@@ -8,6 +8,7 @@ import google.generativeai as genai
 from urllib.parse import quote
 import joblib
 import json
+import re
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
 @st.cache_data
