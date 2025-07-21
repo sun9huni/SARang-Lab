@@ -2,12 +2,8 @@ streamlit
 pandas
 numpy
 rdkit
-matplotlib
-seaborn
-plotly
-google-generativeai
-Pillow
-cairocffi
 scikit-learn
 xgboost
+google-generativeai
+joblib
 requests
