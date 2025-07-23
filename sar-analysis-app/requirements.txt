@@ -7,3 +7,8 @@ xgboost
 google-generativeai
 joblib
 requests
+matplotlib
+seaborn
+plotly
+Pillow
+cairocffi
