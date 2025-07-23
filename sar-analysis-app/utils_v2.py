@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from rdkit import Chem
-from rdkit.Chem import AllChem, DataStructs, Descriptors
+from rdkit.Chem import AllChem, DataStructs, Descriptors, rdFMCS
 from rdkit.Chem.Scaffolds import MurckoScaffold
 import google.generativeai as genai
 from urllib.parse import quote
