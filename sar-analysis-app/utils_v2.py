@@ -43,61 +43,88 @@ def load_data(uploaded_file):
             return None
     return None
 
-# --- NEW: RAG를 위한 PubMed 검색 기능 ---
-@st.cache_data
-def search_pubmed_for_context(smiles, target_name="EGFR", max_results=1):
-    """PubMed에서 관련 논문 초록을 검색하여 RAG를 위한 컨텍스트를 반환합니다."""
-    mol = Chem.MolFromSmiles(smiles)
-    if not mol:
+# --- RAG를 위한 PubMed 검색 기능 (개선) ---
+def get_structural_difference_keyword(smiles1, smiles2):
+    """두 SMILES의 구조적 차이를 나타내는 키워드를 찾습니다."""
+    mol1 = Chem.MolFromSmiles(smiles1)
+    mol2 = Chem.MolFromSmiles(smiles2)
+    if not mol1 or not mol2:
+        return None
+
+    # 최대 공통 부분구조(MCS) 찾기
+    mcs_result = rdFMCS.FindMCS([mol1, mol2], timeout=5)
+    if mcs_result.numAtoms == 0:
         return None
     
-    # 검색어로 분자의 핵심 골격(Scaffold) 사용
-    scaffold = MurckoScaffold.GetScaffoldForMol(mol)
-    scaffold_smiles = Chem.MolToSmiles(scaffold, isomericSmiles=False)
+    mcs_mol = Chem.MolFromSmarts(mcs_result.smartsString)
     
-    # 검색어 구성 (Scaffold SMILES는 너무 길 수 있으므로 분자식 사용)
-    mol_formula = Chem.rdMolDescriptors.CalcMolFormula(scaffold)
-    search_term = f'("{mol_formula}"[Formula]) AND ("{target_name}"[Title/Abstract])'
+    # 각 분자에서 MCS를 제외한 나머지 부분(차이점) 찾기
+    diff1_mol = Chem.DeleteSubstructs(mol1, mcs_mol)
+    diff2_mol = Chem.DeleteSubstructs(mol2, mcs_mol)
 
+    # 더 큰 분자(보통 작용기가 추가된 분자)의 차이점을 키워드로 사용
+    fragment_to_search = diff1_mol if diff1_mol.GetNumAtoms() > diff2_mol.GetNumAtoms() else diff2_mol
+    if fragment_to_search.GetNumAtoms() == 0:
+        return None
+        
+    # IUPAC 이름으로 변환 시도 (예: 'hydroxyl', 'methyl')
     try:
-        # 1. ESearch: 관련 논문 ID 검색
-        esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-        esearch_params = {'db': 'pubmed', 'term': search_term, 'retmax': max_results, 'sort': 'relevance'}
-        response = requests.get(esearch_url, params=esearch_params)
-        response.raise_for_status()
-        
-        root = ET.fromstring(response.content)
-        id_list = [elem.text for elem in root.findall('.//Id')]
-        
-        if not id_list:
-            return None
+        # 이 부분은 외부 라이브러리(예: pubchempy)가 필요할 수 있으나, 여기서는 분자식으로 대체
+        return Chem.rdMolDescriptors.CalcMolFormula(fragment_to_search)
+    except:
+        return None
 
-        # 2. EFetch: 논문 ID로 상세 정보(초록) 가져오기
-        efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-        efetch_params = {'db': 'pubmed', 'id': ",".join(id_list), 'retmode': 'xml'}
-        response = requests.get(efetch_url, params=efetch_params)
-        response.raise_for_status()
-        
-        root = ET.fromstring(response.content)
-        article = root.find('.//PubmedArticle')
-        if article:
-            title = article.findtext('.//ArticleTitle', 'No title found')
-            abstract = article.findtext('.//Abstract/AbstractText', 'No abstract found')
-            pmid = article.findtext('.//PMID', '')
+@st.cache_data
+def search_pubmed_for_context(smiles1, smiles2, target_name="EGFR", max_results=1):
+    """두 분자의 구조적 차이점을 키워드로 PubMed에서 관련 논문을 검색합니다."""
+    
+    def fetch_articles(search_term):
+        """주어진 검색어로 PubMed 문서를 검색하고 첫 번째 결과를 반환합니다."""
+        try:
+            esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+            esearch_params = {'db': 'pubmed', 'term': search_term, 'retmax': max_results, 'sort': 'relevance'}
+            response = requests.get(esearch_url, params=esearch_params, timeout=10)
+            response.raise_for_status()
             
-            return {
-                "title": title,
-                "abstract": abstract,
-                "pmid": pmid,
-                "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-            }
-    except requests.exceptions.RequestException as e:
-        st.warning(f"PubMed 검색 중 네트워크 오류 발생: {e}")
+            root = ET.fromstring(response.content)
+            id_list = [elem.text for elem in root.findall('.//Id')]
+            
+            if not id_list:
+                return None
+
+            efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+            efetch_params = {'db': 'pubmed', 'id': ",".join(id_list), 'retmode': 'xml'}
+            response = requests.get(efetch_url, params=efetch_params, timeout=10)
+            response.raise_for_status()
+            
+            root = ET.fromstring(response.content)
+            article = root.find('.//PubmedArticle')
+            if article:
+                title = article.findtext('.//ArticleTitle', 'No title found')
+                abstract = article.findtext('.//Abstract/AbstractText', 'No abstract found')
+                pmid = article.findtext('.//PMID', '')
+                
+                return {
+                    "title": title,
+                    "abstract": abstract,
+                    "pmid": pmid,
+                    "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+                }
+        except Exception:
+            return None
         return None
-    except Exception as e:
-        st.warning(f"PubMed 데이터 파싱 중 오류 발생: {e}")
-        return None
-    return None
+
+    # 1차 검색: 구조적 차이점 기반 정밀 검색
+    diff_keyword = get_structural_difference_keyword(smiles1, smiles2)
+    if diff_keyword:
+        precise_search_term = f'("{target_name}"[Title/Abstract]) AND ("{diff_keyword}"[Title/Abstract])'
+        result = fetch_articles(precise_search_term)
+        if result:
+            return result
+
+    # 2차 검색 (1차 실패 시): 일반적인 주제어로 검색
+    general_search_term = f'("{target_name}"[Title/Abstract]) AND ("structure activity relationship"[Title/Abstract])'
+    return fetch_articles(general_search_term)
 
 # --- LLM 기반 가설 생성 (RAG 적용) ---
 def generate_hypothesis(cliff):
@@ -119,8 +146,8 @@ def generate_hypothesis(cliff):
         compound_a = mol2_info
         compound_b = mol1_info
     
-    # RAG 컨텍스트 검색
-    context_info = search_pubmed_for_context(compound_b['SMILES'])
+    # RAG 컨텍스트 검색 (두 분자를 모두 전달)
+    context_info = search_pubmed_for_context(compound_a['SMILES'], compound_b['SMILES'])
     rag_prompt_addition = ""
     if context_info:
         rag_prompt_addition = f"""
