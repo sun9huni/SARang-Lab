@@ -1,17 +1,59 @@
-import pandas as pd
-import numpy as np
 import streamlit as st
+import pandas as pd
 from rdkit import Chem
-from rdkit.Chem import AllChem, DataStructs, Descriptors, rdFMCS
-from rdkit.Chem.Scaffolds import MurckoScaffold
-from rdkit.Chem import rdFingerprintGenerator 
+from rdkit.Chem import AllChem, DataStructs, Descriptors
+from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintGenerator
+from rdkit.Chem import rdFMCS
+from rdkit.Chem.Draw import rdMolDraw2D
 import google.generativeai as genai
 from openai import OpenAI
+import requests
 from urllib.parse import quote
 import joblib
 import json
-import requests
-import xml.etree.ElementTree as ET
+import numpy as np
+
+# --- Helper Functions ---
+def canonicalize_smiles(smiles):
+    """SMILES를 RDKit의 표준 Isomeric SMILES로 변환합니다."""
+    if not isinstance(smiles, str):
+        return None
+    mol = Chem.MolFromSmiles(smiles)
+    if mol:
+        return Chem.MolToSmiles(mol, isomericSmiles=True, canonical=True)
+    return None
+
+def get_structural_difference_keyword(smiles1, smiles2):
+    """두 SMILES의 구조적 차이를 나타내는 키워드를 반환합니다."""
+    mol1 = Chem.MolFromSmiles(smiles1)
+    mol2 = Chem.MolFromSmiles(smiles2)
+    if not mol1 or not mol2:
+        return None
+
+    # 최대 공통 부분구조(MCS) 찾기
+    mcs_result = rdFMCS.FindMCS([mol1, mol2], timeout=5)
+    if mcs_result.numAtoms == 0:
+        return None
+    
+    mcs_mol = Chem.MolFromSmarts(mcs_result.smartsString)
+    
+    # 각 분자에서 MCS를 제외한 부분(차이점) 찾기
+    diff1_mol = Chem.ReplaceCore(mol1, mcs_mol)
+    diff2_mol = Chem.ReplaceCore(mol2, mcs_mol)
+
+    if diff1_mol and diff2_mol:
+        # 차이점을 SMILES로 변환하여 키워드로 사용
+        diff1_smiles = Chem.MolToSmiles(diff1_mol, isomericSmiles=True)
+        diff2_smiles = Chem.MolToSmiles(diff2_mol, isomericSmiles=True)
+        # 간단한 작용기 이름으로 변환 (예시)
+        # 실제로는 더 정교한 작용기 이름 라이브러리 필요
+        if 'c1ccccc1' in diff1_smiles.lower() and 'c1ccncc1' in diff2_smiles.lower():
+            return "phenyl pyridine"
+        return f"moiety" # 일반적인 키워드
+    elif diff2_mol:
+         return Chem.MolToSmiles(diff2_mol, isomericSmiles=True)
+         
+    return "structural modification"
 
 # --- Phase 1: 데이터 준비 및 탐색 ---
 @st.cache_data
@@ -235,9 +277,39 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
     cliffs.sort(key=lambda x: x['score'], reverse=True)
     return cliffs
 
-def draw_molecule(smiles_string):
-    encoded_smiles = quote(smiles_string)
-    return f"https://cactus.nci.nih.gov/chemical/structure/{encoded_smiles}/image?format=png&width=350&height=350"
+# --- Phase 4: 시각화 ---
+def draw_highlighted_pair(smiles1, smiles2):
+    """두 분자를 비교하여 차이점을 하이라이팅한 SVG 이미지를 생성합니다."""
+    mol1 = Chem.MolFromSmiles(smiles1)
+    mol2 = Chem.MolFromSmiles(smiles2)
+    if not mol1 or not mol2:
+        return None, None
+
+    # 최대 공통 부분구조(MCS) 찾기
+    mcs_result = rdFMCS.FindMCS([mol1, mol2], timeout=2)
+    mcs_mol = Chem.MolFromSmarts(mcs_result.smartsString)
+    
+    # 하이라이팅할 원자/결합 인덱스 찾기
+    match1 = mol1.GetSubstructMatch(mcs_mol)
+    match2 = mol2.GetSubstructMatch(mcs_mol)
+    
+    # SVG Drawer 생성 및 옵션 설정
+    d2d = rdMolDraw2D.MolDraw2DSVG(350, 300)
+    d2d.drawOptions().addStereoAnnotation = True
+    d2d.drawOptions().clearBackground = False
+    
+    # 첫 번째 분자 그리기 (차이점 하이라이트)
+    d2d.DrawMolecule(mol1, highlightAtoms=[i for i in range(mol1.GetNumAtoms()) if i not in match1])
+    d2d.FinishDrawing()
+    svg1 = d2d.GetDrawingText()
+
+    # 두 번째 분자 그리기 (차이점 하이라이트)
+    d2d.ClearDrawing()
+    d2d.DrawMolecule(mol2, highlightAtoms=[i for i in range(mol2.GetNumAtoms()) if i not in match2])
+    d2d.FinishDrawing()
+    svg2 = d2d.GetDrawingText()
+    
+    return svg1, svg2
 
 def propose_and_predict_analogs(base_smiles, qsar_model, feature_list, api_key, llm_provider):
     """선택된 AI를 통해 새로운 분자를 제안하고 QSAR로 활성을 예측합니다."""
