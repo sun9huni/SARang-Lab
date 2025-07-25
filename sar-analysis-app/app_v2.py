@@ -44,7 +44,7 @@ with st.sidebar:
     if source_selection == '파일 업로드':
         uploaded_file = st.file_uploader("SAR 데이터(.csv)를 업로드하세요.", type=['csv'])
     else:
-        uploaded_file = "data/sample_data_v3.csv"
+        uploaded_file = "sar-analysis-app/data/large_sar_data.csv"
         
     st.markdown("---")
     st.info("타겟을 지정하면, SAR 리포트의 AI 가설이 해당 타겟에 맞춰 자동으로 최적화됩니다.")
