@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from rdkit import Chem
-from utils_v2 import (
+from utils_openai import (
     load_data, find_activity_cliffs, generate_hypothesis, draw_highlighted_pair,
     load_pretrained_model, smiles_to_descriptors, find_most_similar_compounds,
     load_feature_list, propose_and_predict_analogs
