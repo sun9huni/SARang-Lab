@@ -236,7 +236,7 @@ def draw_molecule(smiles_string):
     encoded_smiles = quote(smiles_string)
     return f"https://cactus.nci.nih.gov/chemical/structure/{encoded_smiles}/image?format=png&width=350&height=350"
 
-ef propose_and_predict_analogs(base_smiles, qsar_model, feature_list, api_key, llm_provider):
+def propose_and_predict_analogs(base_smiles, qsar_model, feature_list, api_key, llm_provider):
     """선택된 AI를 통해 새로운 분자를 제안하고 QSAR로 활성을 예측합니다."""
     if not api_key:
         return []
