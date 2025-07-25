@@ -7,7 +7,6 @@ from utils_v2 import (
     load_feature_list, propose_and_predict_analogs
 )
 import plotly.express as px
-import plotly.graph_objects as go
 import numpy as np
 
 # --- 페이지 기본 설정 ---
