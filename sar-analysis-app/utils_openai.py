@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs, Descriptors
-from rdkit.Chem.rdMolDescriptors import GetMorganFingerprintGenerator
+from rdkit.Chem import rdFingerprintGenerator
 from rdkit.Chem import rdFMCS
 from rdkit.Chem.Draw import rdMolDraw2D
 import google.generativeai as genai
