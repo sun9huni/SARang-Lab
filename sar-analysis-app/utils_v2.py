@@ -46,136 +46,116 @@ def load_data(uploaded_file):
 # --- RAG를 위한 PubMed 검색 기능 (개선) ---
 def get_structural_difference_keyword(smiles1, smiles2):
     """두 SMILES의 구조적 차이를 나타내는 키워드를 찾습니다."""
-    mol1 = Chem.MolFromSmiles(smiles1)
-    mol2 = Chem.MolFromSmiles(smiles2)
-    if not mol1 or not mol2:
-        return None
+    mol1, mol2 = Chem.MolFromSmiles(smiles1), Chem.MolFromSmiles(smiles2)
+    if not mol1 or not mol2: return None
 
     # 최대 공통 부분구조(MCS) 찾기
-    mcs_result = rdFMCS.FindMCS([mol1, mol2], timeout=5)
-    if mcs_result.numAtoms == 0:
-        return None
+    mcs_result = rdFMCS.FindMCS([mol1, mol2], timeout=5, completeRingsOnly=True, ringMatchesRingOnly=True)
+    if mcs_result.numAtoms == 0: return None
     
     mcs_mol = Chem.MolFromSmarts(mcs_result.smartsString)
     
-    # 각 분자에서 MCS를 제외한 나머지 부분(차이점) 찾기
-    diff1_mol = Chem.DeleteSubstructs(mol1, mcs_mol)
-    diff2_mol = Chem.DeleteSubstructs(mol2, mcs_mol)
-
-    # 더 큰 분자(보통 작용기가 추가된 분자)의 차이점을 키워드로 사용
-    fragment_to_search = diff1_mol if diff1_mol.GetNumAtoms() > diff2_mol.GetNumAtoms() else diff2_mol
-    if fragment_to_search.GetNumAtoms() == 0:
-        return None
-        
-    # IUPAC 이름으로 변환 시도 (예: 'hydroxyl', 'methyl')
+    # 더 큰 분자에서 공통 구조를 제거하여 차이점을 찾음
+    bigger_mol, smaller_mol = (mol1, mol2) if mol1.GetNumAtoms() > mol2.GetNumAtoms() else (mol2, mol1)
+    
     try:
-        # 이 부분은 외부 라이브러리(예: pubchempy)가 필요할 수 있으나, 여기서는 분자식으로 대체
-        return Chem.rdMolDescriptors.CalcMolFormula(fragment_to_search)
-    except:
-        return None
+        fragments = Chem.DeleteSubstructs(bigger_mol, mcs_mol, onlyFrags=True)
+        # 가장 큰 fragment의 분자식을 반환
+        if frags := Chem.GetMolFrags(fragments, asMols=True):
+            largest_frag = max(frags, key=lambda m: m.GetNumAtoms())
+            return Chem.rdMolDescriptors.CalcMolFormula(largest_frag)
+    except Exception:
+        return None # 오류 발생 시 None 반환
+    return None
 
 @st.cache_data
-def search_pubmed_for_context(smiles1, smiles2, target_name="EGFR", max_results=1):
-    """두 분자의 구조적 차이점을 키워드로 PubMed에서 관련 논문을 검색합니다."""
-    
+def search_pubmed_for_context(smiles1, smiles2, target_name, max_results=1):
+    """PubMed에서 관련 문헌을 검색하여 컨텍스트를 제공합니다."""
     def fetch_articles(search_term):
-        """주어진 검색어로 PubMed 문서를 검색하고 첫 번째 결과를 반환합니다."""
         try:
             esearch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-            esearch_params = {'db': 'pubmed', 'term': search_term, 'retmax': max_results, 'sort': 'relevance'}
-            response = requests.get(esearch_url, params=esearch_params, timeout=10)
+            params = {'db': 'pubmed', 'term': search_term, 'retmax': max_results, 'sort': 'relevance'}
+            response = requests.get(esearch_url, params=params, timeout=10)
             response.raise_for_status()
-            
             root = ET.fromstring(response.content)
             id_list = [elem.text for elem in root.findall('.//Id')]
-            
-            if not id_list:
-                return None
+            if not id_list: return None
 
             efetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-            efetch_params = {'db': 'pubmed', 'id': ",".join(id_list), 'retmode': 'xml'}
-            response = requests.get(efetch_url, params=efetch_params, timeout=10)
+            params = {'db': 'pubmed', 'id': ",".join(id_list), 'retmode': 'xml'}
+            response = requests.get(efetch_url, params=params, timeout=10)
             response.raise_for_status()
-            
             root = ET.fromstring(response.content)
+            
             article = root.find('.//PubmedArticle')
             if article:
                 title = article.findtext('.//ArticleTitle', 'No title found')
-                abstract = article.findtext('.//Abstract/AbstractText', 'No abstract found')
+                abstract = " ".join([p.text for p in article.findall('.//Abstract/AbstractText') if p.text])
                 pmid = article.findtext('.//PMID', '')
-                
-                return {
-                    "title": title,
-                    "abstract": abstract,
-                    "pmid": pmid,
-                    "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-                }
+                if not abstract: abstract = 'No abstract found'
+                return {"title": title, "abstract": abstract, "pmid": pmid, "link": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"}
         except Exception:
             return None
         return None
 
-    # 1차 검색: 구조적 차이점 기반 정밀 검색
+    # 1차 검색: 구조적 차이점과 타겟으로 정밀 검색
     diff_keyword = get_structural_difference_keyword(smiles1, smiles2)
-    if diff_keyword:
-        precise_search_term = f'("{target_name}"[Title/Abstract]) AND ("{diff_keyword}"[Title/Abstract])'
-        result = fetch_articles(precise_search_term)
-        if result:
-            return result
+    if diff_keyword and (result := fetch_articles(f'("{target_name}"[Title/Abstract]) AND ("{diff_keyword}"[Title/Abstract])')):
+        return result
+    
+    # 2차 검색: 결과가 없으면 일반적인 키워드로 검색
+    return fetch_articles(f'("{target_name}"[Title/Abstract]) AND ("structure activity relationship"[Title/Abstract])')
 
-    # 2차 검색 (1차 실패 시): 일반적인 주제어로 검색
-    general_search_term = f'("{target_name}"[Title/Abstract]) AND ("structure activity relationship"[Title/Abstract])'
-    return fetch_articles(general_search_term)
 
 # --- LLM 기반 가설 생성 (RAG 적용) ---
-def generate_hypothesis(cliff):
-    """PubMed 컨텍스트를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
+def generate_hypothesis(cliff, target_name):
+    """OpenAI API를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
     try:
-        api_key = st.secrets["GEMINI_API_KEY"]
-        genai.configure(api_key=api_key)
+        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
     except Exception:
-        st.error("Gemini API 키를 찾을 수 없습니다.")
+        st.error("OpenAI API 키를 찾을 수 없습니다. Streamlit secrets에 키를 설정해주세요.")
         return None, None
 
-    model = genai.GenerativeModel('gemini-2.0-flash')
-    mol1_info, mol2_info = cliff['mol_1'], cliff['mol_2']
+    model = "gpt-4o"
     
-    if mol1_info['activity'] < mol2_info['activity']:
-        compound_a = mol1_info
-        compound_b = mol2_info
-    else:
-        compound_a = mol2_info
-        compound_b = mol1_info
+    compound_a, compound_b = (cliff['mol_1'], cliff['mol_2']) if cliff['mol_1']['activity'] < cliff['mol_2']['activity'] else (cliff['mol_2'], cliff['mol_1'])
     
-    # RAG 컨텍스트 검색 (두 분자를 모두 전달)
-    context_info = search_pubmed_for_context(compound_a['SMILES'], compound_b['SMILES'])
-    rag_prompt_addition = ""
-    if context_info:
-        rag_prompt_addition = f"""
-        **참고 문헌 정보:**
-        - 제목: {context_info['title']}
-        - 초록: {context_info['abstract']}
-        
-        위 참고 문헌의 내용을 바탕으로 가설을 생성해주세요.
-        """
+    context_info = search_pubmed_for_context(compound_a['SMILES'], compound_b['SMILES'], target_name)
+    rag_prompt_addition = f"\n\n**참고 문헌 정보:**\n- 제목: {context_info['title']}\n- 초록: {context_info['abstract']}\n\n위 참고 문헌의 내용을 바탕으로 가설을 생성해주세요." if context_info else ""
+    
+    is_stereoisomer = (Chem.MolToSmiles(Chem.MolFromSmiles(compound_a['SMILES']), isomericSmiles=False) == Chem.MolToSmiles(Chem.MolFromSmiles(compound_b['SMILES']), isomericSmiles=False)) and (compound_a['SMILES'] != compound_b['SMILES'])
+    prompt_addition = "\n\n특히, 이 두 화합물은 동일한 2D 구조를 가진 입체이성질체(stereoisomer)입니다. 3D 공간 배열의 차이가 어떻게 이러한 활성 차이를 유발하는지 집중적으로 설명해주세요." if is_stereoisomer else ""
 
-    prompt_addition = ""
-    mol_a = Chem.MolFromSmiles(compound_a['SMILES'])
-    mol_b = Chem.MolFromSmiles(compound_b['SMILES'])
-    if mol_a and mol_b:
-        base_smiles_a = Chem.MolToSmiles(mol_a, isomericSmiles=False, canonical=True)
-        base_smiles_b = Chem.MolToSmiles(mol_b, isomericSmiles=False, canonical=True)
-        if base_smiles_a == base_smiles_b and compound_a['SMILES'] != compound_b['SMILES']:
-            prompt_addition = "특히, 이 두 화합물은 동일한 2D 구조를 가진 입체이성질체(stereoisomer)입니다. 3D 공간 배열의 차이가 어떻게 이러한 활성 차이를 유발하는지 집중적으로 설명해주세요."
+    system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다. 분석 결과를 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 작성해주세요."
+    user_prompt = f"""
+    **분석 대상:**
+    - **화합물 A (낮은 활성):**
+      - ID: {compound_a['ID']}
+      - SMILES: {compound_a['SMILES']}
+      - 활성도 (pKi): {compound_a['activity']:.2f}
+    - **화합물 B (높은 활성):**
+      - ID: {compound_b['ID']}
+      - SMILES: {compound_b['SMILES']}
+      - 활성도 (pKi): {compound_b['activity']:.2f}
 
-    prompt = f"당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다.\n\n**분석 대상:**\n- **화합물 A (낮은 활성):**\n  - ID: {compound_a['ID']}\n  - SMILES: {compound_a['SMILES']}\n  - 활성도 (pKi): {compound_a['activity']:.2f}\n- **화합물 B (높은 활성):**\n  - ID: {compound_b['ID']}\n  - SMILES: {compound_b['SMILES']}\n  - 활성도 (pKi): {compound_b['activity']:.2f}\n\n**분석 요청:**\n두 화합물은 구조적으로 매우 유사하지만(Tanimoto 유사도: {cliff['similarity']:.2f}), 활성도에서 큰 차이(pKi 차이: {cliff['activity_diff']:.2f})를 보입니다.\n이러한 'Activity Cliff' 현상을 유발하는 핵심적인 구조적 차이점을 찾아내고, 그 차이가 어떻게 활성도 증가로 이어졌는지에 대한 화학적 가설을 전문가의 관점에서 설명해주세요. {prompt_addition}\n\n{rag_prompt_addition}"
-    
+    **분석 요청:**
+    두 화합물은 구조적으로 매우 유사하지만(Tanimoto 유사도: {cliff['similarity']:.2f}), 활성도에서 큰 차이(pKi 차이: {cliff['activity_diff']:.2f})를 보입니다.
+    이러한 'Activity Cliff' 현상을 유발하는 핵심적인 구조적 차이점을 찾아내고, 그 차이가 어떻게 활성도 증가로 이어졌는지에 대한 화학적 가설을 설명해주세요.{prompt_addition}{rag_prompt_addition}
+    """
+
     try:
-        response = model.generate_content(prompt)
-        return response.text, context_info
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
+        return response.choices[0].message.content, context_info
     except Exception as e:
-        st.error(f"Gemini API 호출 중 오류 발생: {e}")
+        st.error(f"OpenAI API 호출 중 오류 발생: {e}")
         return "가설 생성에 실패했습니다.", None
-
+        
 
 # --- QSAR 모델 로드 및 예측용 피처 생성 ---
 
@@ -198,97 +178,57 @@ def load_pretrained_model(model_path="sar-analysis-app/data/qsar_model_final.job
         return None, f"오류: '{model_path}' 파일을 찾을 수 없습니다."
     except Exception as e:
         return None, f"모델 로딩 중 오류 발생: {e}"
-# --- QSAR 예측 관련 함수 ---
-def smiles_to_descriptors(smiles, feature_list):
-    """(QSAR 예측용) SMILES로부터 훈련 시 사용된 피처 목록과 동일한 기술자 벡터를 생성합니다."""
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
-    
-    # 현재 환경에서 계산 가능한 모든 기술자를 계산
-    all_descriptors = {name: func(mol) for name, func in Descriptors.descList}
-    # 훈련 시 사용된 피처 목록 순서대로 값을 추출합니다.
-    # 만약 현재 환경에서 계산할 수 없는 피처가 목록에 있다면, 0으로 처리합니다.
-    descriptor_values = [all_descriptors.get(name, 0) for name in feature_list]
-    return np.nan_to_num(np.array(descriptor_values), nan=0.0, posinf=0.0, neginf=0.0)
-
-        
-# --- Scaffold 기반 분석 함수 ---
-def get_scaffold(smiles):
-    """SMILES에서 Murcko Scaffold를 추출합니다."""
-    mol = Chem.MolFromSmiles(smiles)
-    if mol:
-        try:
-            scaffold = MurckoScaffold.GetScaffoldForMol(mol)
-            return Chem.MolToSmiles(scaffold, isomericSmiles=True)
-        except:
-            return None
-    return None
-
-@st.cache_data
-def find_scaffold_matches(_training_df, new_smiles):
-    """훈련 데이터에서 동일한 Scaffold를 가진 화합물들의 활성도(pKi)를 찾습니다."""
-    new_scaffold = get_scaffold(new_smiles)
-    if not new_scaffold:
-        return []
-    
-    if 'scaffold' not in _training_df.columns:
-        _training_df['scaffold'] = _training_df['SMILES'].apply(get_scaffold)
-    
-    matches = _training_df[_training_df['scaffold'] == new_scaffold]
-    return matches['activity'].tolist()
 
 # --- SAR 분석용 함수들 ---
-def get_morgan_fingerprint(mol):
-    """(SAR 분석용) 분자 객체로부터 Morgan Fingerprint를 생성합니다."""
-    return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
+# def get_morgan_fingerprint(mol):
+#     """(SAR 분석용) 분자 객체로부터 Morgan Fingerprint를 생성합니다."""
+#     return AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=2048)
 
-@st.cache_data
-def prepare_comparison_data(_df):
-    """유사도 비교를 위해 훈련 데이터의 분자 객체와 핑거프린트를 미리 계산합니다."""
-    df = _df.copy()
-    df.dropna(subset=['SMILES'], inplace=True)
-    df['SMILES'] = df['SMILES'].astype(str)
+# --- 기타 유틸리티 함수 ---
+
+def smiles_to_descriptors(smiles, feature_list):
+    """SMILES로부터 고정된 목록의 기술자 값을 계산합니다."""
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None: return None
+    
+    # 기술자 이름과 함수를 매핑한 딕셔너리 생성
+    descriptor_calculators = {name: func for name, func in Descriptors.descList}
+    
+    # feature_list 순서에 따라 값 계산
+    descriptor_values = []
+    for name in feature_list:
+        try:
+            # 해당 이름의 계산 함수를 찾아 실행
+            value = descriptor_calculators[name](mol)
+            descriptor_values.append(value)
+        except:
+            descriptor_values.append(0) # 오류 발생 시 0으로 처리
+
+    return np.nan_to_num(np.array(descriptor_values), nan=0.0, posinf=0.0, neginf=0.0)
+
+def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
+    """DataFrame에서 Activity Cliff 쌍을 찾고 스코어를 계산하여 정렬합니다."""
+    # ... (기존 스코어링 로직과 동일)
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
-    df.dropna(subset=['mol'], inplace=True)
-    df['fp'] = df['mol'].apply(get_morgan_fingerprint)
-    return df
-
-def find_most_similar_compounds(new_smiles, training_df, top_n=2):
-    """새로운 화합물과 가장 유사한 화합물을 훈련 데이터에서 찾습니다."""
-    new_mol = Chem.MolFromSmiles(new_smiles)
-    if not new_mol: return []
-    new_fp = get_morgan_fingerprint(new_mol)
-    training_df['similarity'] = training_df['fp'].apply(lambda x: DataStructs.TanimotoSimilarity(x, new_fp))
-    most_similar = training_df.sort_values(by='similarity', ascending=False).head(top_n)
-    return most_similar.to_dict('records')
-
-def find_activity_cliffs(_df, similarity_threshold=0.8, activity_diff_threshold=1.0):
-    df = _df.copy()
-    df.dropna(subset=['SMILES'], inplace=True)
-    df['SMILES'] = df['SMILES'].astype(str)
-    df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
-    df.dropna(subset=['mol'], inplace=True)
-    if df.empty: return []
-    df['fp'] = df['mol'].apply(get_morgan_fingerprint)
+    df['fp'] = df['mol'].apply(lambda m: AllChem.GetMorganFingerprintAsBitVect(m, 2, nBits=2048))
+    df['scaffold'] = df['mol'].apply(lambda m: Chem.MolToSmiles(MurckoScaffold.GetScaffoldForMol(m)))
+    
     cliffs = []
     for i in range(len(df)):
         for j in range(i + 1, len(df)):
-            fp1, fp2 = df['fp'].iloc[i], df['fp'].iloc[j]
-            similarity = DataStructs.TanimotoSimilarity(fp1, fp2)
-            if similarity >= similarity_threshold:
-                activity1, activity2 = df['activity'].iloc[i], df['activity'].iloc[j]
-                activity_diff = abs(activity1 - activity2)
-                if activity_diff >= activity_diff_threshold:
-                    cliffs.append({'mol_1': df.iloc[i], 'mol_2': df.iloc[j], 'similarity': similarity, 'activity_diff': activity_diff})
-    cliffs.sort(key=lambda x: x['activity_diff'], reverse=True)
+            sim = DataStructs.TanimotoSimilarity(df['fp'].iloc[i], df['fp'].iloc[j])
+            if sim >= similarity_threshold:
+                act_diff = abs(df['activity'].iloc[i] - df['activity'].iloc[j])
+                if act_diff >= activity_diff_threshold:
+                    score = act_diff * (sim - similarity_threshold) * (1 if df['scaffold'].iloc[i] == df['scaffold'].iloc[j] else 0.5)
+                    cliffs.append({'mol_1': df.iloc[i], 'mol_2': df.iloc[j], 'similarity': sim, 'activity_diff': act_diff, 'score': score})
+    cliffs.sort(key=lambda x: x['score'], reverse=True)
     return cliffs
 
 def draw_molecule(smiles_string):
     encoded_smiles = quote(smiles_string)
     return f"https://cactus.nci.nih.gov/chemical/structure/{encoded_smiles}/image?format=png&width=350&height=350"
 
-# --- NEW: AI 기반 분자 제안 및 예측 함수 ---
 def propose_and_predict_analogs(base_smiles, qsar_model, feature_list):
     """AI를 통해 개선된 분자 구조를 제안받고, QSAR 모델로 활성을 예측합니다."""
     try:
