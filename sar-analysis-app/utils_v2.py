@@ -160,13 +160,16 @@ def generate_hypothesis(cliff, target_name):
 # --- QSAR 모델 로드 및 예측용 피처 생성 ---
 
 @st.cache_data
-def load_feature_list(path="sar-analysis-app/data/features.json"):
-    """훈련에 사용된 피처 목록을 불러옵니다."""
+def load_feature_list(path="data/features.json"):
+    """사전 훈련된 모델이 사용한 피처 목록을 불러옵니다."""
     try:
         with open(path, 'r') as f:
-            return json.load(f)
+            features = json.load(f)
+            return features, "피처 목록을 성공적으로 불러왔습니다."
     except FileNotFoundError:
-        return None
+        return None, f"오류: 피처 목록 파일({path})을 찾을 수 없습니다."
+    except Exception as e:
+        return None, f"피처 목록 로딩 중 오류 발생: {e}"
     
 @st.cache_resource
 def load_pretrained_model(model_path="sar-analysis-app/data/qsar_model_final.joblib"):
