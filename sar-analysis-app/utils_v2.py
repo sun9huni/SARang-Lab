@@ -108,27 +108,17 @@ def search_pubmed_for_context(smiles1, smiles2, target_name, max_results=1):
 
 
 # --- LLM 기반 가설 생성 (RAG 적용) ---
-def generate_hypothesis(cliff, target_name, api_key):
-    """OpenAI API를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
+def generate_hypothesis(cliff, target_name, api_key, llm_provider):
+    """선택된 LLM API를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
     if not api_key:
-        st.error("사이드바에 OpenAI API 키를 입력해주세요.")
+        st.error(f"사이드바에 {llm_provider} API 키를 입력해주세요.")
         return "API 키가 필요합니다.", None
-    try:
-        client = OpenAI(api_key=api_key)
-    except Exception:
-        st.error("유효하지 않은 API 키입니다. 키를 확인해주세요.")
-        return "유효하지 않은 API 키입니다.", None
-    
-    model = "gpt-4o"
+
     compound_a, compound_b = (cliff['mol_1'], cliff['mol_2']) if cliff['mol_1']['activity'] < cliff['mol_2']['activity'] else (cliff['mol_2'], cliff['mol_1'])
-    
     context_info = search_pubmed_for_context(compound_a['SMILES'], compound_b['SMILES'], target_name)
     rag_prompt_addition = f"\n\n**참고 문헌 정보:**\n- 제목: {context_info['title']}\n- 초록: {context_info['abstract']}\n\n위 참고 문헌의 내용을 바탕으로 가설을 생성해주세요." if context_info else ""
-    
     is_stereoisomer = (Chem.MolToSmiles(Chem.MolFromSmiles(compound_a['SMILES']), isomericSmiles=False) == Chem.MolToSmiles(Chem.MolFromSmiles(compound_b['SMILES']), isomericSmiles=False)) and (compound_a['SMILES'] != compound_b['SMILES'])
     prompt_addition = "\n\n특히, 이 두 화합물은 동일한 2D 구조를 가진 입체이성질체(stereoisomer)입니다. 3D 공간 배열의 차이가 어떻게 이러한 활성 차이를 유발하는지 집중적으로 설명해주세요." if is_stereoisomer else ""
-
-    system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다. 분석 결과를 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 작성해주세요."
     user_prompt = f"""
     **분석 대상:**
     - **화합물 A (낮은 활성):**
@@ -139,24 +129,36 @@ def generate_hypothesis(cliff, target_name, api_key):
       - ID: {compound_b['ID']}
       - SMILES: {compound_b['SMILES']}
       - 활성도 (pKi): {compound_b['activity']:.2f}
-
     **분석 요청:**
     두 화합물은 구조적으로 매우 유사하지만(Tanimoto 유사도: {cliff['similarity']:.2f}), 활성도에서 큰 차이(pKi 차이: {cliff['activity_diff']:.2f})를 보입니다.
     이러한 'Activity Cliff' 현상을 유발하는 핵심적인 구조적 차이점을 찾아내고, 그 차이가 어떻게 활성도 증가로 이어졌는지에 대한 화학적 가설을 설명해주세요.{prompt_addition}{rag_prompt_addition}
     """
 
     try:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ]
-        )
-        return response.choices[0].message.content, context_info
+        if llm_provider == "OpenAI":
+            client = OpenAI(api_key=api_key)
+            system_prompt = "당신은 숙련된 신약 개발 화학자입니다. 두 화합물의 구조-활성 관계(SAR)에 대한 분석을 요청받았습니다. 분석 결과를 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 작성해주세요."
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+            return response.choices[0].message.content, context_info
+        
+        elif llm_provider == "Gemini":
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            full_prompt = "당신은 숙련된 신약 개발 화학자입니다. 다음 요청에 대해 전문가의 관점에서 명확하고 간결하게 마크다운 형식으로 답변해주세요.\n\n" + user_prompt
+            response = model.generate_content(full_prompt)
+            return response.text, context_info
+
     except Exception as e:
-        st.error(f"OpenAI API 호출 중 오류 발생: {e}")
+        st.error(f"{llm_provider} API 호출 중 오류 발생: {e}")
         return "가설 생성에 실패했습니다.", None
+    
+    return "알 수 없는 LLM 공급자입니다.", None
         
 
 # --- QSAR 모델 로드 및 예측용 피처 생성 ---
