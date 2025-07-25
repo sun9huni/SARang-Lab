@@ -4,11 +4,12 @@ import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import AllChem, DataStructs, Descriptors, rdFMCS
 from rdkit.Chem.Scaffolds import MurckoScaffold
+from rdkit.Chem import rdFingerprintGenerator 
 import google.generativeai as genai
+from openai import OpenAI
 from urllib.parse import quote
 import joblib
 import json
-import re
 import requests
 import xml.etree.ElementTree as ET
 
@@ -215,10 +216,12 @@ def smiles_to_descriptors(smiles, feature_list):
 
 def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
     """DataFrame에서 Activity Cliff 쌍을 찾고 스코어를 계산하여 정렬합니다."""
-    # ... (기존 스코어링 로직과 동일)
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
-    df['fp'] = df['mol'].apply(lambda m: AllChem.GetMorganFingerprintAsBitVect(m, 2, nBits=2048))
-    df['scaffold'] = df['mol'].apply(lambda m: Chem.MolToSmiles(MurckoScaffold.GetScaffoldForMol(m)))
+    
+    fpgenerator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
+    df['fp'] = df['mol'].apply(fpgenerator.GetFingerprintAsBitVect)
+    
+    df['scaffold'] = df['mol'].apply(lambda m: Chem.MolToSmiles(MurckoScaffold.GetScaffoldForMol(m)) if m else None)
     
     cliffs = []
     for i in range(len(df)):
