@@ -75,27 +75,35 @@ if df is not None:
         col1, col2 = st.columns([1, 2])
         with col1:
             st.subheader("분석 조건 설정")
-            similarity_threshold = st.slider('유사도 임계값 (Tanimoto)', 0.5, 1.0, 0.8, 0.01)
-            activity_diff_threshold = st.slider('활성도 차이 임계값 (pKi)', 0.5, 3.0, 1.0, 0.1)
+            similarity_threshold = st.slider('유사도 임계값 (Tanimoto)', 0.5, 1.0, 0.8, 0.01, key="sar_sim", on_change=lambda: st.session_state.pop('cliffs', None))
+            activity_diff_threshold = st.slider('활성도 차이 임계값 (pKi)', 0.5, 3.0, 1.0, 0.1, key="sar_act", on_change=lambda: st.session_state.pop('cliffs', None))
 
         with col2:
             st.subheader("분석 대상 데이터")
-            st.dataframe(df, height=200)
+            st.dataframe(df, height=200, use_container_width=True)
 
         st.markdown("---")
         
-        if st.button("SAR 분석 시작", type="primary", use_container_width=True):
-            if not target_name:
-                st.error("사이드바에서 분석 대상 타겟 단백질 이름을 먼저 입력해주세요.")
+        if st.button("Activity Cliff 찾기", type="primary", use_container_width=True):
+            with st.spinner("Activity Cliff를 탐색 중입니다..."):
+                st.session_state['cliffs'] = find_activity_cliffs(df, similarity_threshold, activity_diff_threshold)
+
+        # --- FIX: st.session_state를 사용하여 분석 결과 표시 로직 복원 ---
+        if 'cliffs' in st.session_state:
+            cliffs = st.session_state['cliffs']
+            if not cliffs:
+                st.warning("설정된 조건에 맞는 Activity Cliff를 찾을 수 없습니다.")
             else:
-                cliffs = find_activity_cliffs(df, similarity_threshold, activity_diff_threshold)
+                st.success(f"총 {len(cliffs)}개의 Activity Cliff를 찾았습니다. 아래에서 분석할 쌍을 선택하세요.")
                 
-                if not cliffs:
-                    st.warning("설정된 조건에 맞는 Activity Cliff를 찾을 수 없습니다. 임계값을 조정해보세요.")
-                else:
-                    selected_cliff = cliffs[0]
+                cliff_options = [f"{i+1}. {c['mol_1']['ID']} vs {c['mol_2']['ID']} (ΔpKi: {c['activity_diff']:.2f}, Score: {c['score']:.2f})" for i, c in enumerate(cliffs)]
+                selected_option = st.selectbox("분석할 Activity Cliff 선택:", cliff_options, key='cliff_select')
+                
+                if selected_option:
+                    selected_index = cliff_options.index(selected_option)
+                    selected_cliff = cliffs[selected_index]
                     mol1, mol2 = selected_cliff['mol_1'], selected_cliff['mol_2']
-                    
+
                     st.subheader("📊 핵심 분석: 주요 활성 변화 요인 (Key Activity Cliff)")
                     
                     c1, c2 = st.columns(2)
@@ -111,16 +119,20 @@ if df is not None:
                               delta_color="off")
                     
                     with st.spinner(f"{target_name} 관련 문헌을 참조하여 가설을 생성 중입니다..."):
-                        hypothesis, source_info = generate_hypothesis(selected_cliff, target_name, api_key)
+                        hypothesis, source_info = generate_hypothesis(selected_cliff, target_name, api_key, llm_provider)
                     
-                    st.markdown("##### AI-Generated Hypothesis:")
-                    st.markdown(hypothesis)
+                    st.markdown(f"##### AI-Generated Hypothesis (by {llm_provider}):")
+                    if "API 키가 필요합니다" in hypothesis or "유효하지 않은" in hypothesis or "가설 생성에 실패했습니다" in hypothesis:
+                         st.error(hypothesis)
+                    else:
+                         st.markdown(hypothesis)
 
                     if source_info:
                         with st.expander("📚 참고 문헌 정보 (RAG 근거)"):
                             st.markdown(f"**제목:** {source_info['title']}")
                             st.markdown(f"**링크:** [PubMed 바로가기]({source_info['link']})")
                             st.caption(f"**초록:** {source_info['abstract']}")
+
 
     # ==================================
     # QSAR 예측 탭 (단일 모델 사용)
@@ -129,7 +141,6 @@ if df is not None:
         st.header("💡 AI 기반 분자 최적화 제안")
         st.markdown("기준 화합물의 SMILES를 입력하면, AI가 활성도 개선이 예상되는 새로운 분자 구조를 제안하고, 사전 훈련된 QSAR 모델로 활성도를 예측합니다.")
         
-        # 타겟과 상관없이 고정된 단일 모델과 피처 목록 로드
         model_pipeline, msg = load_pretrained_model()
         features, f_msg = load_feature_list()
 
@@ -137,36 +148,39 @@ if df is not None:
             base_smiles = st.text_input("기준 화합물 SMILES 입력", "c1ccc(cc1)c2[nH]c3ccc(C)cc3n2")
 
             if st.button("AI 최적화 제안 받기", type="primary", use_container_width=True):
-                base_mol = Chem.MolFromSmiles(base_smiles)
-                if base_mol:
-                    with st.spinner("AI가 새로운 분자를 설계하고 QSAR 모델로 활성을 예측 중입니다..."):
-                        proposals = propose_and_predict_analogs(base_smiles, model_pipeline, features)
-                    
-                    if proposals:
-                        st.subheader("✨ AI 제안 및 예측 결과")
+                if not api_key:
+                    st.error(f"사이드바에 {llm_provider} API 키를 먼저 입력해주세요.")
+                else:
+                    base_mol = Chem.MolFromSmiles(base_smiles)
+                    if base_mol:
+                        with st.spinner(f"{llm_provider} AI가 새로운 분자를 설계하고 QSAR 모델로 활성을 예측 중입니다..."):
+                            proposals = propose_and_predict_analogs(base_smiles, model_pipeline, features, api_key, llm_provider)
                         
-                        st.markdown("---")
-                        st.markdown(f"**기준 화합물:** `{base_smiles}`")
-                        base_features = smiles_to_descriptors(base_smiles, features)
-                        if base_features is not None:
-                            feature_df = pd.DataFrame([base_features], columns=features)
-                            predicted_base_pki = model_pipeline.predict(feature_df)[0]
-                            st.metric("기준 화합물 예측 pKi", f"{predicted_base_pki:.2f}")
-                        st.image(draw_molecule(base_smiles))
-                        st.markdown("---")
-
-                        for i, prop in enumerate(proposals):
-                            st.markdown(f"##### 제안 {i+1}")
-                            st.image(draw_molecule(prop['smiles']))
-                            st.metric(f"제안 {i+1} 예측 pKi", f"{prop['predicted_pki']:.2f}", delta=f"{prop['predicted_pki'] - predicted_base_pki:.2f}")
-                            st.info(f"**AI 제안 이유:** {prop['reason']}")
-                            st.code(prop['smiles'], language='text')
+                        if proposals:
+                            st.subheader("✨ AI 제안 및 예측 결과")
+                            
+                            st.markdown("---")
+                            st.markdown(f"**기준 화합물:** `{base_smiles}`")
+                            base_features = smiles_to_descriptors(base_smiles, features)
+                            if base_features is not None:
+                                feature_df = pd.DataFrame([base_features], columns=features)
+                                predicted_base_pki = model_pipeline.predict(feature_df)[0]
+                                st.metric("기준 화합물 예측 pKi", f"{predicted_base_pki:.2f}")
+                            st.image(draw_molecule(base_smiles))
                             st.markdown("---")
 
+                            for i, prop in enumerate(proposals):
+                                st.markdown(f"##### 제안 {i+1}")
+                                st.image(draw_molecule(prop['smiles']))
+                                st.metric(f"제안 {i+1} 예측 pKi", f"{prop['predicted_pki']:.2f}", delta=f"{prop['predicted_pki'] - predicted_base_pki:.2f}")
+                                st.info(f"**AI 제안 이유:** {prop['reason']}")
+                                st.code(prop['smiles'], language='text')
+                                st.markdown("---")
+
+                        else:
+                            st.error("AI가 유효한 분자를 제안하지 못했습니다. 잠시 후 다시 시도해주세요.")
                     else:
-                        st.error("AI가 유효한 분자를 제안하지 못했습니다. 잠시 후 다시 시도해주세요.")
-                else:
-                    st.error("입력한 SMILES 문자열이 유효하지 않습니다.")
+                        st.error("입력한 SMILES 문자열이 유효하지 않습니다.")
         else:
             st.error(f"모델 또는 피처 목록을 불러오는 데 실패했습니다: {msg or f_msg}")
 
