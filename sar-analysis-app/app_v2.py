@@ -49,14 +49,25 @@ with st.sidebar:
     st.markdown("---")
     st.info("타겟을 지정하면, SAR 리포트의 AI 가설이 해당 타겟에 맞춰 자동으로 최적화됩니다.")
 
-    # 3. OpenAI API 키 입력
-    st.markdown("**3. OpenAI API Key**")
-    api_key = st.text_input(
-        "API 키를 입력하세요.",
-        type="password",
-        help="OpenAI API 키를 입력하면 AI 기반 분석 기능을 사용할 수 있습니다."
+    # 3. LLM 공급자 및 API 키 입력
+    st.markdown("**3. AI 모델 설정**")
+    llm_provider = st.selectbox(
+        "AI 모델 선택",
+        ("OpenAI", "Gemini")
     )
-    st.caption("API 키는 [OpenAI 웹사이트](https://platform.openai.com/api-keys)에서 발급받을 수 있습니다.")
+    
+    api_key_placeholder = f"{llm_provider} API 키를 입력하세요."
+    api_key_help = f"AI 기반 분석 기능을 사용하려면 {llm_provider} API 키가 필요합니다."
+    api_key_link = "https://platform.openai.com/api-keys" if llm_provider == "OpenAI" else "https://aistudio.google.com/app/apikey"
+    
+    api_key = st.text_input(
+        "API 키",
+        type="password",
+        placeholder=api_key_placeholder,
+        help=api_key_help,
+        label_visibility="collapsed"
+    )
+    st.caption(f"API 키는 [{llm_provider} 웹사이트]({api_key_link})에서 발급받을 수 있습니다.")
 
 df = load_data(uploaded_file)
 # QSAR은 타겟과 무관하게 단일 모델을 사용하므로, 훈련 데이터 로딩은 제거
