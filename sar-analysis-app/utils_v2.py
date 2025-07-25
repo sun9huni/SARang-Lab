@@ -160,7 +160,7 @@ def generate_hypothesis(cliff, target_name):
 # --- QSAR 모델 로드 및 예측용 피처 생성 ---
 
 @st.cache_data
-def load_feature_list(path="data/features.json"):
+def load_feature_list(path="sar-analysis-app/data/features.json"):
     """사전 훈련된 모델이 사용한 피처 목록을 불러옵니다."""
     try:
         with open(path, 'r') as f:
