@@ -2,14 +2,9 @@ import streamlit as st
 import pandas as pd
 from rdkit import Chem
 from utils_v2 import (
-    load_data, 
-    find_activity_cliffs, 
-    generate_hypothesis, 
-    draw_molecule, 
-    load_pretrained_model, 
-    smiles_to_descriptors, 
-    load_feature_list,
-    propose_and_predict_analogs
+    load_data, find_activity_cliffs, generate_hypothesis, draw_highlighted_pair,
+    load_pretrained_model, smiles_to_descriptors, find_most_similar_compounds,
+    load_feature_list, propose_and_predict_analogs
 )
 import plotly.express as px
 import plotly.graph_objects as go
