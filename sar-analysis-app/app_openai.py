@@ -99,50 +99,50 @@ if df is not None:
             with st.spinner("Activity Cliff를 탐색 중입니다..."):
                 st.session_state['cliffs'] = find_activity_cliffs(df, similarity_threshold, activity_diff_threshold)
 
-        # --- FIX: st.session_state를 사용하여 분석 결과 표시 로직 복원 ---
+        # 분석 결과 표시
         if 'cliffs' in st.session_state:
             cliffs = st.session_state['cliffs']
             if not cliffs:
                 st.warning("설정된 조건에 맞는 Activity Cliff를 찾을 수 없습니다.")
             else:
-                st.success(f"총 {len(cliffs)}개의 Activity Cliff를 찾았습니다. 아래에서 분석할 쌍을 선택하세요.")
-                
-                cliff_options = [f"{i+1}. {c['mol_1']['ID']} vs {c['mol_2']['ID']} (ΔpKi: {c['activity_diff']:.2f}, Score: {c['score']:.2f})" for i, c in enumerate(cliffs)]
+                st.success(f"총 {len(cliffs)}개의 Activity Cliff를 찾았습니다. 분석할 쌍을 선택하세요.")
+                cliff_options = [f"{i+1}. {c['mol_1']['ID']} vs {c['mol_2']['ID']} (ΔpKi: {c['activity_diff']:.2f})" for i, c in enumerate(cliffs)]
                 selected_option = st.selectbox("분석할 Activity Cliff 선택:", cliff_options, key='cliff_select')
+                selected_index = cliff_options.index(selected_option)
+                selected_cliff = cliffs[selected_index]
                 
-                if selected_option:
-                    selected_index = cliff_options.index(selected_option)
-                    selected_cliff = cliffs[selected_index]
-                    mol1, mol2 = selected_cliff['mol_1'], selected_cliff['mol_2']
+                st.subheader("2. 핵심 분석 리포트")
+                
+                # 하이라이팅된 분자 구조 표시
+                mol1_svg, mol2_svg = draw_highlighted_pair(selected_cliff['mol_1']['SMILES'], selected_cliff['mol_2']['SMILES'])
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**화합물 1: {selected_cliff['mol_1']['ID']}**")
+                    st.image(mol1_svg)
+                    st.metric("pKi", f"{selected_cliff['mol_1']['pKi']:.2f}")
 
-                    st.subheader("📊 핵심 분석: 주요 활성 변화 요인 (Key Activity Cliff)")
-                    
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.image(draw_molecule(mol1['SMILES']), caption=f"화합물 1: {mol1['ID']}")
-                        st.metric("pKi", f"{mol1['activity']:.2f}")
-                    with c2:
-                        st.image(draw_molecule(mol2['SMILES']), caption=f"화합물 2: {mol2['ID']}")
-                        st.metric("pKi", f"{mol2['activity']:.2f}")
-                    
-                    st.metric("Tanimoto 유사도", f"{selected_cliff['similarity']:.3f}", 
-                              delta=f"활성도(pKi) 차이: {selected_cliff['activity_diff']:.3f}", 
-                              delta_color="off")
-                    
-                    with st.spinner(f"{target_name} 관련 문헌을 참조하여 가설을 생성 중입니다..."):
-                        hypothesis, source_info = generate_hypothesis(selected_cliff, target_name, api_key, llm_provider)
-                    
-                    st.markdown(f"##### AI-Generated Hypothesis (by {llm_provider}):")
-                    if "API 키가 필요합니다" in hypothesis or "유효하지 않은" in hypothesis or "가설 생성에 실패했습니다" in hypothesis:
-                         st.error(hypothesis)
+                with col2:
+                    st.markdown(f"**화합물 2: {selected_cliff['mol_2']['ID']}**")
+                    st.image(mol2_svg)
+                    st.metric("pKi", f"{selected_cliff['mol_2']['pKi']:.2f}")
+
+                st.info(f"**Tanimoto 유사도:** {selected_cliff['similarity']:.3f} | **활성도(pKi) 차이:** {selected_cliff['activity_diff']:.3f}")
+
+                # AI 가설 생성
+                with st.spinner("AI가 참고 문헌을 검색하고 가설을 생성 중입니다..."):
+                    if not api_key:
+                        st.warning("사이드바에 API 키를 입력해주세요.")
                     else:
-                         st.markdown(hypothesis)
+                        hypothesis, source_info = generate_hypothesis(selected_cliff, target_name, api_key, llm_provider)
+                        st.subheader("3. 자동화된 해석 및 가설 (AI-Generated Hypothesis)")
+                        st.markdown(hypothesis)
 
-                    if source_info:
-                        with st.expander("📚 참고 문헌 정보 (RAG 근거)"):
-                            st.markdown(f"**제목:** {source_info['title']}")
-                            st.markdown(f"**링크:** [PubMed 바로가기]({source_info['link']})")
-                            st.caption(f"**초록:** {source_info['abstract']}")
+                        if source_info:
+                            with st.expander("📚 참고 문헌 정보 (RAG 근거)"):
+                                st.markdown(f"**- 제목:** {source_info['title']}")
+                                st.markdown(f"**- 링크:** [PubMed 바로가기]({source_info['link']})")
+                                st.text_area("초록(Abstract)", source_info['abstract'], height=200)
 
 
     # ==================================
