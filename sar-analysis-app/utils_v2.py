@@ -219,7 +219,7 @@ def find_activity_cliffs(df, similarity_threshold, activity_diff_threshold):
     df['mol'] = df['SMILES'].apply(Chem.MolFromSmiles)
     
     fpgenerator = rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)
-    df['fp'] = df['mol'].apply(fpgenerator.GetFingerprintAsBitVect)
+    df['fp'] = df['mol'].apply(fpgenerator.GetFingerprint)
     
     df['scaffold'] = df['mol'].apply(lambda m: Chem.MolToSmiles(MurckoScaffold.GetScaffoldForMol(m)) if m else None)
     
@@ -270,7 +270,7 @@ def propose_and_predict_analogs(base_smiles, qsar_model, feature_list, api_key, 
         
         elif llm_provider == "Gemini":
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.0-flash')
             full_prompt = system_prompt + "\n\n" + user_prompt
             response = model.generate_content(full_prompt)
             proposals_text = response.text
