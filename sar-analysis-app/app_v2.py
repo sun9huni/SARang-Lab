@@ -111,7 +111,7 @@ if df is not None:
                               delta_color="off")
                     
                     with st.spinner(f"{target_name} 관련 문헌을 참조하여 가설을 생성 중입니다..."):
-                        hypothesis, source_info = generate_hypothesis(selected_cliff, target_name)
+                        hypothesis, source_info = generate_hypothesis(selected_cliff, target_name, api_key)
                     
                     st.markdown("##### AI-Generated Hypothesis:")
                     st.markdown(hypothesis)
