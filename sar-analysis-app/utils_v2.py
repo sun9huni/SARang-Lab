@@ -108,16 +108,18 @@ def search_pubmed_for_context(smiles1, smiles2, target_name, max_results=1):
 
 
 # --- LLM 기반 가설 생성 (RAG 적용) ---
-def generate_hypothesis(cliff, target_name):
+def generate_hypothesis(cliff, target_name, api_key):
     """OpenAI API를 사용하여 Activity Cliff에 대한 화학적 가설을 생성합니다."""
+    if not api_key:
+        st.error("사이드바에 OpenAI API 키를 입력해주세요.")
+        return "API 키가 필요합니다.", None
     try:
-        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+        client = OpenAI(api_key=api_key)
     except Exception:
-        st.error("OpenAI API 키를 찾을 수 없습니다. Streamlit secrets에 키를 설정해주세요.")
-        return None, None
-
-    model = "gpt-4o"
+        st.error("유효하지 않은 API 키입니다. 키를 확인해주세요.")
+        return "유효하지 않은 API 키입니다.", None
     
+    model = "gpt-4o"
     compound_a, compound_b = (cliff['mol_1'], cliff['mol_2']) if cliff['mol_1']['activity'] < cliff['mol_2']['activity'] else (cliff['mol_2'], cliff['mol_1'])
     
     context_info = search_pubmed_for_context(compound_a['SMILES'], compound_b['SMILES'], target_name)
